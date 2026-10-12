@@ -119,6 +119,7 @@ fn main() -> Result<()> {
         // Colours only on a terminal: log files and journald get plain text.
         .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .init();
+    boltchain::raise_open_file_limit();
     match Cli::parse().command {
         Command::Devnet(args) => {
             tokio::runtime::Builder::new_multi_thread()

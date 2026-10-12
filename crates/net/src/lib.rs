@@ -624,6 +624,10 @@ async fn run(
     // Peers dropped for missing subscriptions, redialled once their last connection closed (a
     // dial while an old connection is still open would again be a "second" connection).
     let mut redial: std::collections::HashSet<PeerId> = std::collections::HashSet::new();
+    // Open connections per peer. Extra ones (AutoNAT dial-backs, simultaneous dials, a hole punch
+    // next to its relayed connection) are closed after a grace period: they would otherwise stay
+    // open for good (the testnet ran out of file descriptors after a week, 2026-10-11).
+    let mut conns: HashMap<PeerId, HashMap<libp2p::swarm::ConnectionId, ConnInfo>> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -645,6 +649,12 @@ async fn run(
                     chain_peers.remove(&peer);
                     redial.insert(peer);
                     let _ = swarm.disconnect_peer_id(peer);
+                }
+                for (peer, cs) in &conns {
+                    for id in redundant(cs, now) {
+                        tracing::debug!(%peer, ?id, "closing a redundant connection");
+                        swarm.close_connection(id);
+                    }
                 }
             }
             _ = bootstrap_tick.tick() => {
@@ -755,7 +765,16 @@ async fn run(
                         swarm.add_external_address(address);
                     }
                 }
-                SwarmEvent::ConnectionClosed { peer_id, num_established: 0, .. } => {
+                SwarmEvent::ConnectionClosed { peer_id, connection_id, num_established, .. } => {
+                    if let Some(cs) = conns.get_mut(&peer_id) {
+                        cs.remove(&connection_id);
+                        if cs.is_empty() {
+                            conns.remove(&peer_id);
+                        }
+                    }
+                    if num_established > 0 {
+                        continue;
+                    }
                     reach.remove(&peer_id);
                     chain_peers.remove(&peer_id);
                     if redial.remove(&peer_id) {
@@ -764,7 +783,12 @@ async fn run(
                     storage_rate.remove(&peer_id);
                     relay_candidates.remove(&peer_id);
                 }
-                SwarmEvent::ConnectionEstablished { peer_id, num_established, endpoint, .. } => {
+                SwarmEvent::ConnectionEstablished { peer_id, connection_id, num_established, endpoint, .. } => {
+                    let relayed = endpoint.get_remote_address().iter().any(|p| matches!(p, Protocol::P2pCircuit));
+                    conns.entry(peer_id).or_default().insert(
+                        connection_id,
+                        ConnInfo { relayed, opened: std::time::Instant::now(), last_pong: None },
+                    );
                     reach.insert(peer_id, addr_scope(endpoint.get_remote_address()));
                     if num_established.get() == 1 {
                         deliver(&ev_tx, NetEvent::Connected(peer_id));
@@ -952,6 +976,11 @@ async fn run(
                         let _ = reply.send(Err(format!("forwarding failed: {error}")));
                     }
                 }
+                SwarmEvent::Behaviour(BehaviourEvent::Ping(ping::Event { peer, connection, result: Ok(_) })) => {
+                    if let Some(c) = conns.get_mut(&peer).and_then(|cs| cs.get_mut(&connection)) {
+                        c.last_pong = Some(std::time::Instant::now());
+                    }
+                }
                 _ => {}
             }
         }
@@ -978,6 +1007,52 @@ fn tx_stateless_ok(raw: &[u8], chain_id: u64) -> bool {
 
 /// How long a chain peer may stay connected without announcing any gossip topic.
 const SUBSCRIPTION_GRACE: Duration = Duration::from_secs(20);
+
+/// One open connection to a peer.
+#[derive(Debug, Clone, Copy)]
+struct ConnInfo {
+    /// Through a circuit relay.
+    relayed: bool,
+    /// When it was established.
+    opened: std::time::Instant,
+    /// Last successful ping on it.
+    last_pong: Option<std::time::Instant>,
+}
+
+/// How long an extra connection may stay open (an AutoNAT dial-back or a hole punch completes
+/// well within it).
+const EXTRA_CONNECTION_GRACE: Duration = Duration::from_secs(30);
+
+/// A connection without a successful ping for this long is not trusted to be alive (pings go
+/// every 15 s).
+const PING_STALE: Duration = Duration::from_secs(45);
+
+/// Connections to one peer that should be closed: all but the best one, once past
+/// [`EXTRA_CONNECTION_GRACE`]. Best: direct before relayed, then answering pings (a connection
+/// to a peer's previous, dead process does not), then the oldest (gossipsub and Bitswap streams
+/// already run on it).
+fn redundant(
+    cs: &HashMap<libp2p::swarm::ConnectionId, ConnInfo>,
+    now: std::time::Instant,
+) -> Vec<libp2p::swarm::ConnectionId> {
+    if cs.len() < 2 {
+        return Vec::new();
+    }
+    let alive = |c: &ConnInfo| {
+        c.last_pong.map_or(now.duration_since(c.opened) < PING_STALE, |t| {
+            now.duration_since(t) < PING_STALE
+        })
+    };
+    let Some(keep) =
+        cs.iter().min_by_key(|(id, c)| (c.relayed, !alive(c), c.opened, **id)).map(|(id, _)| *id)
+    else {
+        return Vec::new();
+    };
+    cs.iter()
+        .filter(|(id, c)| **id != keep && now.duration_since(c.opened) >= EXTRA_CONNECTION_GRACE)
+        .map(|(id, _)| *id)
+        .collect()
+}
 
 /// Chain peers connected longer than [`SUBSCRIPTION_GRACE`] whose gossip subscriptions we never
 /// received (`gossip` lists each gossipsub peer with its number of topics; chain peers missing
@@ -1138,6 +1213,36 @@ mod scope_tests {
         // An IPFS client (not a chain peer) without topics is left alone.
         let ipfs = PeerId::random();
         assert!(stale_subscriptions([(ipfs, 0)].into_iter(), &HashMap::new(), now).is_empty());
+    }
+
+    #[test]
+    fn one_connection_per_peer_is_kept() {
+        use libp2p::swarm::ConnectionId;
+        let t0 = std::time::Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        let c = |relayed, opened, pong: Option<u64>| ConnInfo {
+            relayed,
+            opened: at(opened),
+            last_pong: pong.map(at),
+        };
+        let (a, b, r) = (
+            ConnectionId::new_unchecked(1),
+            ConnectionId::new_unchecked(2),
+            ConnectionId::new_unchecked(3),
+        );
+        // An AutoNAT dial-back next to a live connection: closed after the grace period only.
+        let mut cs = HashMap::from([(a, c(false, 0, Some(100))), (b, c(false, 100, Some(110)))]);
+        assert!(redundant(&cs, at(110)).is_empty(), "still in its grace period");
+        assert_eq!(redundant(&cs, at(131)), vec![b], "the newer one goes");
+        // The old connection went to the peer's previous process (no pong for a while): keep
+        // the new one.
+        cs.insert(a, c(false, 0, Some(60)));
+        assert_eq!(redundant(&cs, at(131)), vec![a]);
+        // A hole punch replaces the relayed connection even though it is newer.
+        let cs = HashMap::from([(r, c(true, 0, Some(100))), (b, c(false, 90, Some(100)))]);
+        assert_eq!(redundant(&cs, at(125)), vec![r]);
+        // A single connection is never touched, healthy or not.
+        assert!(redundant(&HashMap::from([(a, c(true, 0, None))]), at(1000)).is_empty());
     }
 
     #[test]

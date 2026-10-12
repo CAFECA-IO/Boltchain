@@ -40,7 +40,17 @@ pub async fn serve(addr: SocketAddr, handler: Handler) -> Result<SocketAddr> {
     let limits = Arc::new(Limits::default());
     tokio::spawn(async move {
         loop {
-            let Ok((mut sock, peer)) = listener.accept().await else { continue };
+            let (mut sock, peer) = match listener.accept().await {
+                Ok(x) => x,
+                Err(e) => {
+                    // Out of file descriptors (or similar): accept fails at once while the
+                    // backlog stays full; without a pause this loop kept a core busy
+                    // (testnet, 2026-10-11).
+                    tracing::warn!(%bound, "accept failed: {e}");
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    continue;
+                }
+            };
             let handler = handler.clone();
             let limits = limits.clone();
             tokio::spawn(async move {

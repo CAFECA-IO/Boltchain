@@ -51,6 +51,9 @@ use tokio::sync::mpsc;
 /// How often a node re-publishes its head while that head is a mined block.
 const REANNOUNCE: Duration = Duration::from_secs(4);
 
+/// How often a node whose epoch ended retries entering the next one.
+const EPOCH_RETRY: Duration = Duration::from_secs(5);
+
 /// Validator options.
 #[derive(Debug, Clone)]
 pub struct ValidatorConfig {
@@ -315,7 +318,7 @@ impl Validator {
             return Some(encode_cert(&Cert::Qc(qc.clone())));
         }
         // First block of an epoch: the proof that the anchor is final.
-        if let Ok(b) = std::fs::read(self.proof_path(qc.epoch - 1)) {
+        if let Some(b) = load_proof_at(&self.proof_path(qc.epoch - 1)) {
             return Some(b);
         }
         // Someone else already built it (we joined late): take it from the chain.
@@ -468,6 +471,10 @@ impl Validator {
         let mut actions = ctx.engine.start();
         actions.extend(self.replay(&mut ctx, &mut future));
         let mut reannounce = tokio::time::interval(REANNOUNCE);
+        // Entering the next epoch can fail for a passing reason (no file descriptor left, say);
+        // nothing else would ask again once the finished epoch's engine is idle.
+        let mut epoch_retry = tokio::time::interval(EPOCH_RETRY);
+        epoch_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut logged = (0, 0);
         loop {
             self.handle(&mut ctx, actions, &itx, &sources, &rounds, &mut future, &mut dg, &orphans)
@@ -492,6 +499,7 @@ impl Validator {
                 }
             }
             actions = tokio::select! {
+                _ = epoch_retry.tick() => self.catch_up_epochs(&mut ctx, &mut future),
                 _ = reannounce.tick() => {
                     // Until the committee certified a block, keep the terminal block visible.
                     self.reannounce_mined_head().await;
@@ -692,7 +700,7 @@ impl Validator {
             return vec![];
         }
         tracing::warn!(epoch = ctx.epoch, old = %current.hash, new = %anchor.hash, "terminal block replaced; restarting the epoch");
-        self.persist(&ctx.engine);
+        let _ = self.persist(&ctx.engine);
         match self.enter_epoch(ctx.epoch) {
             Ok(next) => {
                 *ctx = next;
@@ -891,11 +899,16 @@ impl Validator {
         }
     }
 
-    fn persist(&self, engine: &Engine<BlsScheme>) {
+    /// Writes the engine's safety state; false if it did not reach the disk.
+    fn persist(&self, engine: &Engine<BlsScheme>) -> bool {
         let bytes = serde_json::to_vec(&engine.persisted()).expect("state serializes");
         let path = self.state_path();
-        if let Err(e) = write_durable(&path, &bytes) {
-            tracing::error!("could not persist consensus state: {e}");
+        match write_durable(&path, &bytes) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::error!("could not persist consensus state: {e}");
+                false
+            }
         }
     }
 
@@ -913,7 +926,11 @@ impl Validator {
     ) {
         let mut queue: VecDeque<Action<BlsScheme>> = actions.into();
         while !queue.is_empty() {
-            // Safety state hits the disk before any vote or timeout leaves this node.
+            // Safety state hits the disk before any vote or timeout leaves this node. If it
+            // cannot (disk full, out of file descriptors), they are not sent: after a restart
+            // the node could otherwise sign again in a round it already signed in. The timer
+            // stays armed, so it retries once writing works again.
+            let mut unsaved = false;
             if queue.iter().any(|a| {
                 matches!(
                     a,
@@ -923,11 +940,17 @@ impl Validator {
                         | Action::Commit { .. }
                 )
             }) {
-                self.persist(&ctx.engine);
+                unsaved = !self.persist(&ctx.engine);
             }
             let batch: Vec<_> = queue.drain(..).collect();
             for a in batch {
                 match a {
+                    Action::Broadcast(Message::Vote(_) | Message::Timeout(_))
+                    | Action::SendTo(..)
+                        if unsaved =>
+                    {
+                        tracing::warn!("consensus state not saved; withholding a vote or timeout");
+                    }
                     Action::Broadcast(m) | Action::SendTo(_, m) => {
                         if dg.blocks(ctx, &m) {
                             continue;
@@ -1174,11 +1197,38 @@ fn write_durable(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Epoch proofs also kept in memory (latest few), so a node whose disk write failed still has
+/// the proof its next proposal needs: on 2026-10-11 a validator out of file descriptors could
+/// not store it, and as leader of the new epoch's round 2 skipped its proposal.
+type ProofCache = parking_lot::Mutex<VecDeque<(PathBuf, Vec<u8>)>>;
+
+fn proof_cache() -> &'static ProofCache {
+    static CACHE: std::sync::OnceLock<ProofCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
 fn save_proof_at(path: &std::path::Path, epoch: u64, proof: &CommitProof<BlsScheme>) {
-    let _ = std::fs::create_dir_all(path.parent().expect("has parent"));
-    if std::fs::write(path, encode_cert(&Cert::Epoch(proof.clone()))).is_err() {
-        tracing::error!(epoch, "could not store epoch proof");
+    let bytes = encode_cert(&Cert::Epoch(proof.clone()));
+    {
+        let mut c = proof_cache().lock();
+        c.retain(|(p, _)| p != path);
+        c.push_back((path.to_path_buf(), bytes.clone()));
+        while c.len() > 8 {
+            c.pop_front();
+        }
     }
+    let _ = std::fs::create_dir_all(path.parent().expect("has parent"));
+    if let Err(e) = write_durable(path, &bytes) {
+        tracing::error!(epoch, "could not store epoch proof (kept in memory): {e}");
+    }
+}
+
+/// An epoch proof saved by [`save_proof_at`]: from memory, else from disk.
+fn load_proof_at(path: &std::path::Path) -> Option<Vec<u8>> {
+    if let Some((_, b)) = proof_cache().lock().iter().find(|(p, _)| p == path) {
+        return Some(b.clone());
+    }
+    std::fs::read(path).ok()
 }
 
 /// Builds this node's proposal for `round` on the block certified by `qc`.

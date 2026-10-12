@@ -274,3 +274,70 @@ async fn relayed_node_serves_blocks() {
     }
     assert_eq!(got, Some(data), "block fetched over the relayed connection");
 }
+
+/// TCP sockets of this process that are ESTABLISHED (from /proc/net/tcp*).
+fn established_tcp() -> usize {
+    let mut inodes = std::collections::HashSet::new();
+    for f in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        for line in std::fs::read_to_string(f).unwrap_or_default().lines().skip(1) {
+            let c: Vec<&str> = line.split_whitespace().collect();
+            if c.len() > 9 && c[3] == "01" {
+                inodes.insert(c[9].to_string());
+            }
+        }
+    }
+    std::fs::read_dir("/proc/self/fd")
+        .unwrap()
+        .filter_map(|e| std::fs::read_link(e.ok()?.path()).ok())
+        .filter_map(|l| {
+            l.to_str()?.strip_prefix("socket:[")?.strip_suffix(']').map(|s| s.to_string())
+        })
+        .filter(|i| inodes.contains(i))
+        .count()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "takes 5 minutes; run with --ignored"]
+async fn connections_do_not_accumulate() {
+    let mut nodes = Vec::new();
+    let mut boot: Vec<Multiaddr> = Vec::new();
+    for i in 0..4 {
+        let key = identity::Keypair::generate_ed25519();
+        let (h, mut rx) = start(
+            NetConfig {
+                chain_id: 1337,
+                keypair: key,
+                listen: vec![
+                    "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+                    "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+                ],
+                bootnodes: boot.clone(),
+                producer: None,
+                fork_id: "aabbccdd-0".into(),
+                fork_check: None,
+                relay_server: i == 0,
+            },
+            Arc::new(Mem::default()),
+        )
+        .await
+        .unwrap();
+        tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        if i == 0 {
+            boot = addrs(&h).await;
+        }
+        nodes.push(h);
+    }
+    // AutoNAT probes every 60 s until each node knows it is reachable; every probe used to leave
+    // an extra connection open for good (8 more sockets a minute here, about 1,000 open files
+    // per testnet node after a week).
+    let mut counts = Vec::new();
+    for t in 0..10 {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        let n = established_tcp();
+        eprintln!("t={}s established tcp sockets: {n}", (t + 1) * 30);
+        counts.push(n);
+    }
+    // 4 nodes, at most one connection per pair (2 sockets each in this process).
+    let last = *counts.last().unwrap();
+    assert!(last <= 12, "connections accumulate: {counts:?}");
+}
