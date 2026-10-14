@@ -269,6 +269,161 @@ impl VerdictCert {
     }
 }
 
+/// The message a verifier signs for a TEE attestation request (ADR 0013 §6.4): whether the
+/// evidence is genuine and matches, and the machine ID it names (zero when refused).
+pub fn attest_msg(chain_id: u64, epoch: u64, request: u64, ok: bool, machine: &[u8; 32]) -> Vec<u8> {
+    [
+        b"boltchain/attest/v1".as_slice(),
+        &chain_id.to_be_bytes(),
+        &epoch.to_be_bytes(),
+        &request.to_be_bytes(),
+        &[ok as u8],
+        machine,
+    ]
+    .concat()
+}
+
+/// One verifier's vote on an attestation request (gossiped).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttestVote {
+    /// Epoch whose verifier panel decides.
+    pub epoch: u64,
+    /// `EnclaveLease` request id.
+    pub request: u64,
+    /// Whether the evidence was accepted.
+    pub ok: bool,
+    /// The machine ID (keccak256 of the EK public key); zero when refused.
+    #[serde(with = "serde_bytes")]
+    pub machine: Vec<u8>,
+    /// Index of the verifier in the epoch's panel.
+    pub member: u16,
+    /// Signature over [`attest_msg`].
+    pub sig: BlsSignature,
+}
+
+fn machine32(m: &[u8]) -> Option<[u8; 32]> {
+    m.try_into().ok()
+}
+
+impl AttestVote {
+    /// Signs a vote.
+    pub fn sign(
+        key: &BlsSecretKey,
+        chain_id: u64,
+        epoch: u64,
+        request: u64,
+        ok: bool,
+        machine: [u8; 32],
+        member: u16,
+    ) -> Self {
+        Self {
+            epoch,
+            request,
+            ok,
+            machine: machine.to_vec(),
+            member,
+            sig: key.sign(&attest_msg(chain_id, epoch, request, ok, &machine)),
+        }
+    }
+
+    /// dag-cbor.
+    pub fn encode(&self) -> Vec<u8> {
+        serde_ipld_dagcbor::to_vec(self).expect("vote encodes")
+    }
+
+    /// From dag-cbor.
+    pub fn decode(b: &[u8]) -> Option<Self> {
+        serde_ipld_dagcbor::from_slice(b).ok()
+    }
+
+    /// Whether the signature is `panel[member]`'s.
+    pub fn verify(&self, chain_id: u64, panel: &[BlsPublicKey]) -> bool {
+        let Some(m) = machine32(&self.machine) else { return false };
+        panel.get(self.member as usize).is_some_and(|pk| {
+            bls::verify(pk, &attest_msg(chain_id, self.epoch, self.request, self.ok, &m), &self.sig)
+        })
+    }
+}
+
+/// A verifier-panel certificate on an attestation request. Its `request` field keeps it from
+/// decoding as an [`AuditCert`] or a [`VerdictCert`] (and the reverse).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttestCert {
+    /// Epoch whose panel decided.
+    pub epoch: u64,
+    /// `EnclaveLease` request id.
+    pub request: u64,
+    /// Whether the evidence was accepted.
+    pub ok: bool,
+    /// The machine ID; zero when refused.
+    #[serde(with = "serde_bytes")]
+    pub machine: Vec<u8>,
+    /// Signers, as a bitmap over the panel.
+    #[serde(with = "serde_bytes")]
+    pub signers: Vec<u8>,
+    /// Aggregate signature.
+    pub sig: BlsSignature,
+}
+
+impl AttestCert {
+    /// Aggregates `votes` (same epoch, request, result; distinct members) for a panel of `n`.
+    pub fn aggregate(votes: &[AttestVote], n: usize) -> Option<Self> {
+        let first = votes.first()?;
+        if votes.iter().any(|v| {
+            v.epoch != first.epoch || v.request != first.request || v.ok != first.ok || v.machine != first.machine
+        }) {
+            return None;
+        }
+        let mut members: Vec<u16> = votes.iter().map(|v| v.member).collect();
+        members.sort_unstable();
+        members.dedup();
+        if members.len() != votes.len() || members.len() * 3 <= n * 2 {
+            return None;
+        }
+        let sigs: Vec<BlsSignature> = votes.iter().map(|v| v.sig).collect();
+        Some(Self {
+            epoch: first.epoch,
+            request: first.request,
+            ok: first.ok,
+            machine: first.machine.clone(),
+            signers: bitmap::encode(&members, n),
+            sig: bls::aggregate(&sigs)?,
+        })
+    }
+
+    /// dag-cbor.
+    pub fn encode(&self) -> Vec<u8> {
+        serde_ipld_dagcbor::to_vec(self).expect("certificate encodes")
+    }
+
+    /// From dag-cbor.
+    pub fn decode(b: &[u8]) -> Option<Self> {
+        serde_ipld_dagcbor::from_slice(b).ok()
+    }
+
+    /// The machine ID.
+    pub fn machine_id(&self) -> [u8; 32] {
+        machine32(&self.machine).unwrap_or_default()
+    }
+
+    /// Whether more than 2/3 of `panel` signed this result.
+    pub fn verify(&self, chain_id: u64, panel: &[BlsPublicKey]) -> bool {
+        let Some(m) = machine32(&self.machine) else { return false };
+        let signers = bitmap::decode(&self.signers);
+        if signers.len() * 3 <= panel.len() * 2
+            || signers.iter().any(|i| *i as usize >= panel.len())
+        {
+            return false;
+        }
+        let pks: Vec<BlsPublicKey> = signers.iter().map(|i| panel[*i as usize]).collect();
+        bls::fast_aggregate_verify(
+            &pks,
+            &attest_msg(chain_id, self.epoch, self.request, self.ok, &m),
+            &self.sig,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,5 +474,20 @@ mod tests {
         assert!(VerdictCert::decode(&a.encode()).is_none());
         assert_eq!(VerdictCert::decode(&cert.encode()).unwrap(), cert);
         assert_eq!(VerdictVote::decode(&votes[1].encode()).unwrap(), votes[1]);
+        let keys16: Vec<BlsSecretKey> = (0..4).map(bls::dev_key).collect();
+        let panel4: Vec<BlsPublicKey> = keys16.iter().map(|k| k.public_key()).collect();
+        let av: Vec<AttestVote> = (0..3u16)
+            .map(|m| AttestVote::sign(&keys16[m as usize], 7, 5, 9, true, [3; 32], m))
+            .collect();
+        assert!(av.iter().all(|v| v.verify(7, &panel4)));
+        let ac = AttestCert::aggregate(&av, 4).unwrap();
+        assert!(ac.verify(7, &panel4));
+        assert!(AttestCert::aggregate(&av[..2], 4).is_none());
+        assert!(VerdictCert::decode(&ac.encode()).is_none());
+        assert!(AuditCert::decode(&ac.encode()).is_none());
+        assert!(AttestCert::decode(&cert.encode()).is_none());
+        let mut other = ac.clone();
+        other.machine = vec![4; 32];
+        assert!(!other.verify(7, &panel4));
     }
 }

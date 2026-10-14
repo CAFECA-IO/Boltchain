@@ -1,0 +1,27 @@
+[package]
+name = "bolt-attest"
+description = "Boltchain TEE attestation: Intel TDX quotes and TPM 2.0 measured boot (ADR 0013), with software simulators for tests and development"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+thiserror.workspace = true
+hex.workspace = true
+sha2.workspace = true
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+rsa = { version = "0.9", features = ["sha2"] }
+aes = "0.8"
+hmac = "0.12"
+x509-parser = { version = "0.18", features = ["verify"] }
+rcgen = "0.13"
+time = "0.3"
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+[lints]
+workspace = true

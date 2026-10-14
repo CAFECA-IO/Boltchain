@@ -10,7 +10,10 @@ use crate::wallet::{format_bolt, rpc, send_tx_nowait};
 use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
-use bolt_system::{abi::IComputeMarket, addresses::COMPUTE};
+use bolt_system::{
+    abi::{IComputeMarket, IEnclaveLease},
+    addresses::{COMPUTE, LEASES},
+};
 use serde_json::json;
 
 /// A relay sending from `signer` through the node's own JSON-RPC at `url`.
@@ -99,6 +102,28 @@ impl Relay {
                     if b.is_zero() { Err("nothing to pay out".into()) } else { Ok(()) }
                 }
                 _ => Err("this ComputeMarket call is not relayed".into()),
+            };
+        }
+        if to == LEASES {
+            return match sel {
+                IEnclaveLease::checkpointCall::SELECTOR | IEnclaveLease::activateCall::SELECTOR => {
+                    // Both pay the lease's relay fee to the sender.
+                    let id = if sel == IEnclaveLease::checkpointCall::SELECTOR {
+                        IEnclaveLease::checkpointCall::abi_decode(data).map_err(|e| e.to_string())?.id
+                    } else {
+                        IEnclaveLease::activateCall::abi_decode(data).map_err(|e| e.to_string())?.id
+                    };
+                    let l = self.view(LEASES, IEnclaveLease::leaseCall { id })?;
+                    self.fee_ok(U256::from(l.relayFee), "checkpoint")
+                }
+                IEnclaveLease::payoutCall::SELECTOR => {
+                    let c =
+                        IEnclaveLease::payoutCall::abi_decode(data).map_err(|e| e.to_string())?;
+                    let b =
+                        self.view(LEASES, IEnclaveLease::balanceOfCall { account: c.account })?;
+                    if b.is_zero() { Err("nothing to pay out".into()) } else { Ok(()) }
+                }
+                _ => Err("this EnclaveLease call is not relayed".into()),
             };
         }
         Err(format!("calls to {to} are not relayed"))

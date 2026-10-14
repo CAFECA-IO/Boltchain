@@ -9,7 +9,7 @@ use alloy_consensus::Header;
 use alloy_primitives::{B256, U256, keccak256};
 use anyhow::{Context, Result, bail};
 use bolt_chain::Chain;
-use bolt_consensus::{AuditCert, AuditVote, VerdictCert, VerdictVote};
+use bolt_consensus::{AttestCert, AttestVote, AuditCert, AuditVote, VerdictCert, VerdictVote};
 use bolt_ipld::{
     Cid, Envelope,
     deal::DealIndex,
@@ -38,6 +38,7 @@ const TAG_DEAL: u8 = 3;
 const TAG_VERDICT: u8 = 4;
 const TAG_VERIFIER_KEY: u8 = 5;
 const TAG_DISPUTE_SHARE: u8 = 6;
+const TAG_ATTEST: u8 = 7;
 
 /// How often a node announces its validators' verifier encryption keys.
 pub const VERIFIER_KEY_EVERY: Duration = Duration::from_secs(60);
@@ -165,6 +166,8 @@ pub enum StorageMsg {
     VerifierKey(VerifierKey),
     /// Dispute files re-encrypted for the panel.
     DisputeShare(DisputeShare),
+    /// TEE attestation vote (ADR 0013).
+    Attest(AttestVote),
 }
 
 impl StorageMsg {
@@ -201,6 +204,11 @@ impl StorageMsg {
                 v.extend(serde_ipld_dagcbor::to_vec(d).expect("encodes"));
                 v
             }
+            StorageMsg::Attest(vote) => {
+                let mut v = vec![TAG_ATTEST];
+                v.extend(vote.encode());
+                v
+            }
         }
     }
 
@@ -218,6 +226,7 @@ impl StorageMsg {
             TAG_DISPUTE_SHARE => {
                 serde_ipld_dagcbor::from_slice(rest).ok().map(StorageMsg::DisputeShare)
             }
+            TAG_ATTEST => AttestVote::decode(rest).map(StorageMsg::Attest),
             _ => None,
         }
     }
@@ -268,6 +277,9 @@ pub struct StorageConfig {
     /// (ADR 0011). `None`: they do not vote (a dispute without a verdict settles for the provider
     /// after 7 days).
     pub verifier: Option<Arc<dyn Judge>>,
+    /// TPM vendor roots this node's validators trust when their panel appraises T2 machines
+    /// (ADR 0013). Empty: they abstain.
+    pub tpm_roots: Vec<Vec<u8>>,
 }
 
 /// A disputed compute job, as a verifier sees it.
@@ -377,6 +389,7 @@ impl Default for StorageConfig {
             storage_accounts: vec![],
             hosted_file: None,
             verifier: None,
+            tpm_roots: vec![],
         }
     }
 }
@@ -422,6 +435,18 @@ struct State {
     shares: HashMap<u64, DisputeShare>,
     /// When this node last announced its verifier keys.
     keys_announced: Option<Instant>,
+    /// Attestation votes by (epoch, request, ok, machine) and panel position.
+    attest_votes: HashMap<(u64, u64, bool, B256), BTreeMap<u16, AttestVote>>,
+    /// Requests certified here.
+    attest_certified: HashSet<u64>,
+    /// (request, member) this node has voted on.
+    attested: HashSet<(u64, u16)>,
+    /// When a request was last left undecided (retried after a minute).
+    attest_abstained: HashMap<u64, Instant>,
+    /// Attestation panel keys by epoch.
+    attest_panels: HashMap<u64, Vec<BlsPublicKey>>,
+    /// Requests below this id are decided.
+    request_cursor: u64,
 }
 
 /// The storage service.
@@ -430,8 +455,8 @@ pub struct Storage {
     net: NetHandle,
     cfg: StorageConfig,
     state: Mutex<State>,
-    /// Background jobs running: snapshot, audit, prune, deals, verdicts.
-    busy: [AtomicBool; 5],
+    /// Background jobs running: snapshot, audit, prune, deals, verdicts, attestations.
+    busy: [AtomicBool; 6],
 }
 
 const SNAPSHOT_JOB: usize = 0;
@@ -439,6 +464,7 @@ const AUDIT_JOB: usize = 1;
 const PRUNE_JOB: usize = 2;
 const DEAL_JOB: usize = 3;
 const VERDICT_JOB: usize = 4;
+const ATTEST_JOB: usize = 5;
 
 impl std::fmt::Debug for Storage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -584,6 +610,13 @@ impl Storage {
                                 tracing::debug!("deal round: {e:#}");
                             }
                         });
+                        if !self.cfg.keys.is_empty() {
+                            self.spawn_guarded(ATTEST_JOB, |s| async move {
+                                if let Err(e) = s.attest_round().await {
+                                    tracing::debug!("attestation round: {e:#}");
+                                }
+                            });
+                        }
                         if self.cfg.verifier.is_some() && !self.cfg.keys.is_empty() {
                             self.spawn_guarded(VERDICT_JOB, |s| async move {
                                 if let Err(e) = s.verdict_round().await {
@@ -663,6 +696,11 @@ impl Storage {
             Some(StorageMsg::Verdict(v)) => {
                 if let Err(e) = self.add_verdict_vote(v) {
                     tracing::debug!("verdict vote: {e:#}");
+                }
+            }
+            Some(StorageMsg::Attest(v)) => {
+                if let Err(e) = self.add_attest_vote(v) {
+                    tracing::debug!("attestation vote: {e:#}");
                 }
             }
             Some(StorageMsg::Deal(a)) => {
@@ -1072,6 +1110,133 @@ impl Storage {
             }
         }
         self.state.lock().job_cursor = cursor;
+        Ok(())
+    }
+
+    /// Keys of the attestation panel of `epoch` (EnclaveLease), cached.
+    fn attest_panel_keys(&self, epoch: u64) -> Result<Vec<BlsPublicKey>> {
+        if let Some(k) = self.state.lock().attest_panels.get(&epoch) {
+            return Ok(k.clone());
+        }
+        let ids = view(&self.chain, LEASES, IEnclaveLease::panelCall { epoch })?;
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let keys = view(&self.chain, STAKING, IStakingManager::keysOfCall { ids })?;
+        let keys: Vec<BlsPublicKey> =
+            keys.pubkeys.chunks_exact(48).map(BlsPublicKey::from_slice).collect();
+        let mut st = self.state.lock();
+        st.attest_panels.insert(epoch, keys.clone());
+        if st.attest_panels.len() > 64 {
+            let oldest = *st.attest_panels.keys().min().expect("non-empty");
+            st.attest_panels.remove(&oldest);
+        }
+        Ok(keys)
+    }
+
+    /// Checks an attestation vote, counts it, and queues the certificate once more than 2/3 of
+    /// the panel agree.
+    fn add_attest_vote(&self, vote: AttestVote) -> Result<()> {
+        let chain_id = self.chain.config().chain_id;
+        let panel = self.attest_panel_keys(vote.epoch)?;
+        if panel.is_empty() || !vote.verify(chain_id, &panel) {
+            bail!("attestation vote does not verify against the panel of epoch {}", vote.epoch);
+        }
+        let machine = B256::from_slice(&vote.machine);
+        let mut st = self.state.lock();
+        if st.attest_certified.contains(&vote.request) {
+            return Ok(());
+        }
+        let votes = st.attest_votes.entry((vote.epoch, vote.request, vote.ok, machine)).or_default();
+        votes.insert(vote.member, vote.clone());
+        if votes.len() * 3 > panel.len() * 2 {
+            let all: Vec<AttestVote> = votes.values().cloned().collect();
+            if let Some(cert) = AttestCert::aggregate(&all, panel.len()) {
+                tracing::info!(
+                    request = vote.request,
+                    ok = vote.ok,
+                    votes = all.len(),
+                    "TEE attestation certified"
+                );
+                st.attest_certified.insert(vote.request);
+                st.attest_votes.retain(|(_, r, _, _), _| *r != vote.request);
+                drop(st);
+                self.chain.add_audit_cert(cert.encode());
+            }
+        }
+        Ok(())
+    }
+
+    /// Verifier duty (ADR 0013 §6.4): for every attestation request assigned to a panel this
+    /// node's validators sit on, appraise the machine's evidence once and vote for each seat.
+    async fn attest_round(&self) -> Result<()> {
+        let chain_id = self.chain.config().chain_id;
+        let head = self.chain.head()?.number;
+        if !bolt_primitives::forks::active(chain_id, bolt_primitives::forks::TEE, head) {
+            return Ok(());
+        }
+        let count = view(&self.chain, LEASES, IEnclaveLease::requestCountCall {})?.to::<u64>();
+        let start = self.state.lock().request_cursor.max(1);
+        let mut cursor = start;
+        let mut advancing = true;
+        let mine = self.my_ids()?;
+        for id in start..=count {
+            let chain = self.chain.clone();
+            let call = move |to: alloy_primitives::Address, data: Vec<u8>| -> Result<Vec<u8>> {
+                let r = chain.store().reader()?;
+                Ok(queries::call_raw(&StateView::latest(&r), chain.config().chain_id, to, data)?
+                    .to_vec())
+            };
+            let Some(p) = crate::attest::pending(id, call)? else {
+                let r = view(&self.chain, LEASES, IEnclaveLease::requestCall { r: U256::from(id) })?;
+                if advancing && r.state != 1 {
+                    cursor = id + 1;
+                }
+                continue;
+            };
+            advancing = false;
+            if self.state.lock().attest_certified.contains(&id) {
+                continue;
+            }
+            let panel = view(&self.chain, LEASES, IEnclaveLease::panelCall { epoch: p.request.epoch })?;
+            let seats: Vec<(u16, usize)> = panel
+                .iter()
+                .enumerate()
+                .filter_map(|(m, v)| mine.get(v).filter(|k| **k != usize::MAX).map(|k| (m as u16, *k)))
+                .filter(|(m, _)| !self.state.lock().attested.contains(&(id, *m)))
+                .collect();
+            if seats.is_empty()
+                || self
+                    .state
+                    .lock()
+                    .attest_abstained
+                    .get(&id)
+                    .is_some_and(|t| t.elapsed() < Duration::from_secs(60))
+            {
+                continue;
+            }
+            let roots = self.cfg.tpm_roots.clone();
+            let chain = self.chain.clone();
+            let outcome = tokio::task::spawn_blocking(move || {
+                let allows = |image: u64, m: B256| -> Result<bool> {
+                    view(&chain, IMAGES, IImageRegistry::allowsCall { id: image, kind: 3, m })
+                };
+                crate::attest::appraise(&p, &roots, unix_secs(), allows)
+            })
+            .await?;
+            let Some((ok, machine)) = outcome else {
+                self.state.lock().attest_abstained.insert(id, Instant::now());
+                continue;
+            };
+            let epoch = view(&self.chain, LEASES, IEnclaveLease::requestCall { r: U256::from(id) })?.epoch;
+            for (m, k) in seats {
+                let vote = AttestVote::sign(&self.cfg.keys[k], chain_id, epoch, id, ok, machine.0, m);
+                self.state.lock().attested.insert((id, m));
+                let _ = self.net.publish_storage(StorageMsg::Attest(vote.clone()).encode()).await;
+                self.add_attest_vote(vote)?;
+            }
+        }
+        self.state.lock().request_cursor = cursor;
         Ok(())
     }
 

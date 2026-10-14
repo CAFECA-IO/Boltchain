@@ -358,16 +358,22 @@ impl Chain {
         number: u64,
         certs: Vec<Vec<u8>>,
         strict: bool,
-    ) -> Result<(Vec<bolt_system::AuditResult>, Vec<(u64, bool)>, Vec<Vec<u8>>)>
+    ) -> Result<(
+        Vec<bolt_system::AuditResult>,
+        Vec<(u64, bool)>,
+        Vec<(u64, bool, B256)>,
+        Vec<Vec<u8>>,
+    )>
     where
         D::Error: std::fmt::Debug,
     {
         use bolt_system::{abi::*, addresses::*, queries};
         let mut results: Vec<bolt_system::AuditResult> = Vec::new();
         let mut verdicts: Vec<(u64, bool)> = Vec::new();
+        let mut attests: Vec<(u64, bool, B256)> = Vec::new();
         let mut kept = Vec::new();
         if certs.is_empty() {
-            return Ok((results, verdicts, kept));
+            return Ok((results, verdicts, attests, kept));
         }
         let chain_id = self.config.chain_id;
         let q = |e| ChainError::Exec(format!("{e}"));
@@ -376,7 +382,57 @@ impl Chain {
             bolt_primitives::forks::active(chain_id, bolt_primitives::forks::SWARM, number);
         let mut panels: HashMap<u64, Vec<bolt_primitives::bls::BlsPublicKey>> = HashMap::new();
         let mut rest = Vec::new();
+        let tee_on = bolt_primitives::forks::active(chain_id, bolt_primitives::forks::TEE, number);
+        let mut attest_panels: HashMap<u64, Vec<bolt_primitives::bls::BlsPublicKey>> =
+            HashMap::new();
         for bytes in certs {
+            // TEE attestation results (ADR 0013): a request still waiting, assigned to the
+            // certificate's epoch.
+            if let Some(c) = bolt_consensus::AttestCert::decode(&bytes) {
+                let mut ok = tee_on && !attests.iter().any(|(r, _, _)| *r == c.request);
+                if ok {
+                    let n = queries::call(db, chain_id, LEASES, IEnclaveLease::requestCountCall {})
+                        .map_err(q)?;
+                    ok = c.request != 0 && U256::from(c.request) <= n;
+                }
+                if ok {
+                    let r = queries::call(
+                        db,
+                        chain_id,
+                        LEASES,
+                        IEnclaveLease::requestCall { r: U256::from(c.request) },
+                    )
+                    .map_err(q)?;
+                    ok = r.state == 1 && r.epoch == c.epoch && r.epoch != 0;
+                }
+                if ok && !attest_panels.contains_key(&c.epoch) {
+                    let ids = queries::call(
+                        db,
+                        chain_id,
+                        LEASES,
+                        IEnclaveLease::panelCall { epoch: c.epoch },
+                    )
+                    .map_err(q)?;
+                    let keys = if ids.is_empty() {
+                        Vec::new()
+                    } else {
+                        queries::call(db, chain_id, STAKING, IStakingManager::keysOfCall { ids })
+                            .map_err(q)?
+                            .pubkeys
+                            .chunks_exact(48)
+                            .map(bolt_primitives::bls::BlsPublicKey::from_slice)
+                            .collect()
+                    };
+                    attest_panels.insert(c.epoch, keys);
+                }
+                if ok && c.verify(chain_id, &attest_panels[&c.epoch]) {
+                    attests.push((c.request, c.ok, B256::from(c.machine_id())));
+                    kept.push(bytes);
+                } else if strict {
+                    return Err(ChainError::InvalidBlock("invalid attestation certificate".into()));
+                }
+                continue;
+            }
             let Some(c) = bolt_consensus::VerdictCert::decode(&bytes) else {
                 rest.push(bytes);
                 continue;
@@ -419,7 +475,7 @@ impl Chain {
         }
         let certs = rest;
         if certs.is_empty() {
-            return Ok((results, verdicts, kept));
+            return Ok((results, verdicts, attests, kept));
         }
         let epoch = self.rules.epoch_of(number);
         let audits =
@@ -462,7 +518,7 @@ impl Chain {
                 None => {}
             }
         }
-        Ok((results, verdicts, kept))
+        Ok((results, verdicts, attests, kept))
     }
 
     /// A certificate carried by a mined block in phase B: a QC of the current epoch's checkpoint
@@ -622,10 +678,14 @@ impl Chain {
             } else {
                 None
             };
-            let (audit_results, verdicts, audits) =
+            let (audit_results, verdicts, attestations, audits) =
                 self.check_audits(&db, number, audits, expected.is_some())?;
-            let history =
-                bolt_system::HistoryInputs { epoch_index, audits: audit_results, verdicts };
+            let history = bolt_system::HistoryInputs {
+                epoch_index,
+                audits: audit_results,
+                verdicts,
+                attestations,
+            };
             let mut ex =
                 BlockExecutor::new(&db, params).map_err(|e| ChainError::Exec(e.to_string()))?;
             // Hard forks activating at this block (ADR 0008 §2).

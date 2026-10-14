@@ -202,6 +202,54 @@ pub fn format_bolt(wei: U256) -> String {
     if frac.is_empty() { format!("{}", wei / w) } else { format!("{}.{frac}", wei / w) }
 }
 
+/// A plain HTTP/1.1 request (`http://` only); returns the status and the body (Content-Length
+/// or read to close; chunked bodies are de-chunked).
+pub fn http(method: &str, url: &str, body: Option<&[u8]>, timeout: Duration) -> Result<(u16, Vec<u8>)> {
+    let rest = url.strip_prefix("http://").context("only http:// endpoints are supported")?;
+    let (host, path) =
+        rest.split_once('/').map(|(h, p)| (h, format!("/{p}"))).unwrap_or((rest, "/".into()));
+    let addr = std::net::ToSocketAddrs::to_socket_addrs(host)?
+        .next()
+        .with_context(|| format!("resolving {host}"))?;
+    let mut s = std::net::TcpStream::connect_timeout(&addr, timeout)
+        .with_context(|| format!("connecting to {host}"))?;
+    s.set_read_timeout(Some(timeout))?;
+    s.set_write_timeout(Some(timeout))?;
+    let body = body.unwrap_or_default();
+    write!(
+        s,
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )?;
+    s.write_all(body)?;
+    let mut resp = Vec::new();
+    s.take(64 << 20).read_to_end(&mut resp)?;
+    let split = resp.windows(4).position(|w| w == b"\r\n\r\n").context("bad HTTP response")?;
+    let head = String::from_utf8_lossy(&resp[..split]).to_string();
+    let mut data = resp[split + 4..].to_vec();
+    let status: u16 = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse().ok())
+        .context("bad HTTP status line")?;
+    if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+        let mut out = Vec::new();
+        let mut p = 0;
+        while let Some(e) = data[p..].windows(2).position(|w| w == b"\r\n") {
+            let n = usize::from_str_radix(String::from_utf8_lossy(&data[p..p + e]).trim(), 16)
+                .context("chunk size")?;
+            p += e + 2;
+            if n == 0 || p + n > data.len() {
+                break;
+            }
+            out.extend_from_slice(&data[p..p + n]);
+            p += n + 2;
+        }
+        data = out;
+    }
+    Ok((status, data))
+}
+
 /// One JSON-RPC call over plain HTTP (`http://host:port[/path]`).
 pub fn rpc(url: &str, method: &str, params: Value) -> Result<Value> {
     let rest = url.strip_prefix("http://").context("only http:// endpoints are supported")?;

@@ -47,6 +47,7 @@ pub fn raise_open_file_limit() -> Option<u64> {
     None
 }
 
+pub mod attest;
 pub mod bench;
 pub mod certificates;
 pub mod checkpoint;

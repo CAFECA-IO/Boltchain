@@ -16,6 +16,10 @@
   },
   "timestamp": 0,
   "extraData": "0x426f6c74636861696e20646576",
+  "devTeeRoot": [
+    "0x220465356bb008f48c3603b8c15cee1aa98d2b63c66d07dfb7babd673b587cca",
+    "0x2b28481e29984bc5a407134ff9e9b0dcca4c7d722b0127339b6806f496f2bf5b"
+  ],
   "devValidators": [
     {
       "name": "dev-0",

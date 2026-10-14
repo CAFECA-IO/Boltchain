@@ -1583,6 +1583,11 @@ pub struct StorageArgs {
     /// Smallest fee, in BOLT, the relay accepts per action.
     #[arg(long, default_value = "0.001")]
     pub relay_min_fee: String,
+    /// Directory of TPM vendor root certificates (DER or PEM) this node's validators trust when
+    /// their verifier panel appraises T2 machines (ADR 0013). Without it they abstain on T2
+    /// requests (development chains also trust the simulated vendor).
+    #[arg(long, value_name = "DIR")]
+    pub tpm_roots: Option<PathBuf>,
 }
 
 /// Runs a validator node until Ctrl-C.
@@ -1633,6 +1638,7 @@ pub async fn run(args: ValidatorArgs) -> Result<()> {
                 Arc::new(crate::storage::CommandJudge { cmd, rpc: format!("http://{}", args.rpc) })
                     as Arc<dyn crate::storage::Judge>
             }),
+            tpm_roots: crate::attest::tpm_roots(args.storage.tpm_roots.as_deref(), genesis.dev)?,
             ..Default::default()
         },
     );

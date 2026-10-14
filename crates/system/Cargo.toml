@@ -24,6 +24,7 @@ thiserror.workspace = true
 workspace = true
 
 [dev-dependencies]
+bolt-attest.workspace = true
 alloy-signer = "2.5"
 alloy-signer-local = "2.5"
 hex.workspace = true

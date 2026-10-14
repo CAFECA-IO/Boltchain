@@ -28,6 +28,8 @@ serde_ipld_dagcbor.workspace = true
 alloy-rlp.workspace = true
 bolt-system.workspace = true
 bolt-vault.workspace = true
+bolt-attest.workspace = true
+rand_core = { version = "0.6", features = ["getrandom"] }
 libp2p.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true

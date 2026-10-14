@@ -24,4 +24,6 @@ mod deal_tests;
 #[cfg(test)]
 mod storage_tests;
 #[cfg(test)]
+mod tee_tests;
+#[cfg(test)]
 mod tests;

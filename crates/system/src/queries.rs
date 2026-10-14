@@ -15,6 +15,37 @@ pub enum QueryError {
     Call(Address, String),
 }
 
+/// Runs a view call with raw calldata against `db`; returns the raw output.
+pub fn call_raw<D: DatabaseRef>(
+    db: D,
+    chain_id: u64,
+    to: Address,
+    data: Vec<u8>,
+) -> Result<Bytes, QueryError>
+where
+    D::Error: std::fmt::Debug,
+{
+    let input = BlockInput {
+        chain_id,
+        number: 0,
+        timestamp: 0,
+        beneficiary: Address::ZERO,
+        gas_limit: 0,
+        base_fee: 0,
+        prevrandao: B256::ZERO,
+    };
+    view_call(WrapDatabaseRef(db), &input, to, Bytes::from(data)).map_err(|e| {
+        QueryError::Call(
+            to,
+            match e {
+                ViewError::Database(d) => format!("database: {d:?}"),
+                ViewError::Reverted => "reverted".into(),
+                ViewError::Evm(s) => s,
+            },
+        )
+    })
+}
+
 /// Runs a view call against `db`.
 pub fn call<D: DatabaseRef, C: SolCall>(
     db: D,

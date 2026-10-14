@@ -45,6 +45,10 @@ pub struct Genesis {
     /// (no mining phase).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dev_validators: Vec<DevValidator>,
+    /// Dev chains only: a test attestation root (P-256 public key `x ‖ y`) replacing the Intel
+    /// SGX Root CA in `TeeCollateral`, so simulated TDX quotes verify (ADR 0013).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dev_tee_root: Option<[B256; 2]>,
     /// Predeployed contracts. Balances must be zero outside dev chains.
     #[serde(default)]
     pub alloc: BTreeMap<Address, GenesisAccount>,
@@ -322,6 +326,7 @@ impl Genesis {
                 || c.history_recent_epochs.is_some()
                 || c.pos_streak_epochs.is_some()
                 || !self.dev_validators.is_empty()
+                || self.dev_tee_root.is_some()
             {
                 return Err(GenesisError::DevOnly);
             }
@@ -465,6 +470,7 @@ mod tests {
             timestamp: 1_800_000_000,
             extra_data: Bytes::from_static(b"Boltchain"),
             dev_validators: vec![],
+            dev_tee_root: None,
             alloc: BTreeMap::new(),
         }
     }

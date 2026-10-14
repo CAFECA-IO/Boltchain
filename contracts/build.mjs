@@ -22,6 +22,11 @@ const WANT = [
   'src/ComputeMarket.sol:ComputeMarket',
   'src/Certificates.sol:Certificates',
   'src/ModelRegistry.sol:ModelRegistry',
+  'src/TeeCollateral.sol:TeeCollateral',
+  'src/TdxVerifier.sol:TdxVerifier',
+  'src/ImageRegistry.sol:ImageRegistry',
+  'src/EnclaveLease.sol:EnclaveLease',
+  'src/LimitedWallet.sol:LimitedWallet',
 ];
 
 const sources = {};

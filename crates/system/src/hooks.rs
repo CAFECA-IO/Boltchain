@@ -175,6 +175,8 @@ pub struct HistoryInputs {
     pub audits: Vec<AuditResult>,
     /// Verified compute verdicts carried by the block (ADR 0011): (job id, provider at fault).
     pub verdicts: Vec<(u64, bool)>,
+    /// Verified TEE attestation results (ADR 0013): (request id, accepted, machine ID).
+    pub attestations: Vec<(u64, bool, B256)>,
 }
 
 /// How the block being executed is produced (for rewards).
@@ -229,6 +231,9 @@ where
             bitmap: Bytes::copy_from_slice(&votes.bitmap),
         },
     )?;
+    if bolt_primitives::forks::active(exec.params().input.chain_id, bolt_primitives::forks::TEE, number) {
+        assign_attestations(exec, parent, rules.epoch_of(number))?;
+    }
     if !rules.is_epoch_start(number) {
         return record_audits(exec, history);
     }
@@ -482,6 +487,39 @@ where
     Ok(())
 }
 
+/// Assigns waiting TEE attestation requests (ADR 0013 §6.4) to the epoch's verifier panel,
+/// drawn like the dispute panel (from the committee, or all stakers while mining) by the first
+/// block of the epoch that has a request; later requests of the epoch go to the same panel.
+fn assign_attestations<D: DatabaseRef>(
+    exec: &mut BlockExecutor<D>,
+    parent: &Header,
+    epoch: u64,
+) -> Result<(), BlockError<D::Error>>
+where
+    D::Error: std::error::Error + Send + Sync + 'static,
+{
+    if view(exec, LEASES, IEnclaveLease::pendingAttestationsCall {})?.is_empty() {
+        return Ok(());
+    }
+    if !view(exec, LEASES, IEnclaveLease::panelCall { epoch })?.is_empty() {
+        sys(exec, LEASES, IEnclaveLease::assignAttestationsCall { epoch, members: vec![] })?;
+        return Ok(());
+    }
+    let mut pool = view(exec, CONSENSUS, IConsensusRegistry::committeeCall { epoch })?.ids;
+    if pool.is_empty() {
+        pool = view(exec, STAKING, IStakingManager::snapshotCall { minAge: 0 })?.ids;
+    }
+    if pool.is_empty() {
+        return Ok(());
+    }
+    let seed = alloy_primitives::keccak256(
+        [seed(parent).as_slice(), &epoch.to_be_bytes(), b"tee/attestations"].concat(),
+    );
+    let members = crate::history::draw_panel(&seed, epoch, &pool);
+    sys(exec, LEASES, IEnclaveLease::assignAttestationsCall { epoch, members })?;
+    Ok(())
+}
+
 fn record_audits<D: DatabaseRef>(
     exec: &mut BlockExecutor<D>,
     history: &HistoryInputs,
@@ -494,6 +532,13 @@ where
             exec,
             SWARM,
             ISwarmStorage::recordAuditCall { epoch: a.epoch, task: a.task, ok: a.passed },
+        )?;
+    }
+    for (request, ok, machine) in &history.attestations {
+        sys(
+            exec,
+            LEASES,
+            IEnclaveLease::recordAttestationCall { r: U256::from(*request), ok: *ok, machineId: *machine },
         )?;
     }
     for (job, fault) in &history.verdicts {

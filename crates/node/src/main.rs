@@ -292,6 +292,7 @@ fn make_dev_genesis(
         timestamp: 0,
         extra_data: extra.as_bytes().to_vec().into(),
         dev_validators,
+        dev_tee_root: None,
         alloc,
     };
     g.validate()?;

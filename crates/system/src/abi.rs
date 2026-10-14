@@ -198,6 +198,231 @@ sol! {
         function providerCount(uint64 id) external view returns (uint32);
     }
 
+    interface ITeeCollateral {
+        struct TcbInfo {
+            uint32 evaluation;
+            uint64 issueDate;
+            uint64 nextUpdate;
+            bytes2 pceid;
+            bytes8 seamAttributes;
+            bytes8 seamAttributesMask;
+            bytes seamMrSigner;
+        }
+        struct TcbLevel {
+            bytes16 sgx;
+            uint16 pcesvn;
+            bytes16 tdx;
+            uint8 status;
+        }
+        struct QeIdentity {
+            uint32 evaluation;
+            uint64 issueDate;
+            uint64 nextUpdate;
+            bytes4 miscselect;
+            bytes4 miscselectMask;
+            bytes16 attributes;
+            bytes16 attributesMask;
+            bytes32 mrsigner;
+            uint16 isvprodid;
+            uint16[] isvsvn;
+            uint8[] status;
+        }
+        event CaAdded(bytes32 indexed subject, uint64 notAfter);
+        event CrlUpdated(bytes32 indexed issuer, uint64 thisUpdate, uint256 serials);
+        event TcbInfoUpdated(bytes6 indexed fmspc, uint32 evaluation, uint64 nextUpdate);
+        event QeIdentityUpdated(uint32 evaluation, uint64 nextUpdate);
+        function initDevRoot(bytes32 x, bytes32 y) external;
+        function root() external view returns (bytes32 x, bytes32 y);
+        function addCa(bytes der) external;
+        function setCrl(bytes der) external;
+        function setTcbInfo(bytes document, bytes32 signer) external;
+        function setQeIdentity(bytes document, bytes32 signer) external;
+        function cas(bytes32 subject) external view returns (bytes32 x, bytes32 y, uint64 notAfter);
+        function revoked(bytes32 issuer, bytes32 serial) external view returns (bool);
+        function crlThisUpdate(bytes32 issuer) external view returns (uint64);
+        function crlNextUpdate(bytes32 issuer) external view returns (uint64);
+        function tdxStatus(bytes6 fmspc, uint8[16] compSvn, uint16 pcesvn, bytes16 teeTcbSvn, bytes mrSignerSeam,
+            bytes8 seamAttributes) external view returns (uint8 status, uint64 nextUpdate);
+        function qeStatus(bytes4 miscselect, bytes16 attributes, bytes32 mrsigner, uint16 isvprodid, uint16 isvsvn)
+            external view returns (uint8 status, uint64 nextUpdate);
+        function tcbInfo(bytes6 fmspc) external view returns (TcbInfo info, TcbLevel[] levels);
+        function qeIdentity() external view returns (QeIdentity);
+    }
+
+    interface ITdxVerifier {
+        struct Result {
+            uint8 tcbStatus;
+            uint8 qeStatus;
+            bytes32 machineId;
+            bytes6 fmspc;
+            bytes16 teeTcbSvn;
+            bytes mrSeam;
+            bytes8 tdAttributes;
+            bytes8 xfam;
+            bytes mrTd;
+            bytes rtmr0;
+            bytes rtmr1;
+            bytes rtmr2;
+            bytes rtmr3;
+            bytes reportData;
+            uint8[16] compSvn;
+            uint16 pcesvn;
+            bytes32 pckSerial;
+            bytes32 pckIssuer;
+            bytes mrSignerSeam;
+            bytes8 seamAttributes;
+        }
+        function verify(bytes quote) external view returns (Result r);
+        function measurementOf(Result r) external pure returns (bytes32);
+    }
+
+    interface IImageRegistry {
+        struct Image {
+            address registrant;
+            uint64 registeredAt;
+            string name;
+            bytes source;
+            string build;
+        }
+        struct Measurement {
+            uint8 kind;
+            uint32 reproductions;
+            string platform;
+        }
+        event ImageRegistered(uint64 indexed id, address indexed registrant, string name, bytes source);
+        event MeasurementAdded(uint64 indexed id, bytes32 indexed measurement, uint8 kind, string platform);
+        function register(string name, bytes source, string build) external returns (uint64 id);
+        function addMeasurement(uint64 id, uint8 kind, bytes raw, string platform) external returns (bytes32 m);
+        function reproduce(uint64 id, bytes32 m) external;
+        function allows(uint64 id, uint8 kind, bytes32 m) external view returns (bool);
+        function image(uint64 id) external view returns (Image);
+        function measurement(uint64 id, bytes32 m) external view returns (Measurement);
+        function measurementsOf(uint64 id) external view returns (bytes32[]);
+        function imageCount() external view returns (uint256);
+    }
+
+    interface IEnclaveLease {
+        struct Machine {
+            address operator;
+            uint8 kind;
+            bool verified;
+            bool available;
+            uint8 tcbStatus;
+            uint128 pricePerHour;
+            bytes32 machineId;
+            uint32 cpus;
+            uint32 memGiB;
+            uint32 leases;
+            uint64 registeredAt;
+            string gpu;
+            string endpoint;
+        }
+        struct Lease {
+            address renter;
+            uint64 machine;
+            uint64 image;
+            uint8 state;
+            uint8 minTcb;
+            bool degraded;
+            uint128 pricePerHour;
+            uint128 escrow;
+            uint128 relayFee;
+            uint128 minBond;
+            bytes32 agentHash;
+            bytes32 nonce;
+            address signer;
+            bytes32 encKey;
+            uint64 version;
+            uint64 activatedAt;
+            uint64 lastCheckpointAt;
+            uint64 lastPaidAt;
+            uint64 exitAt;
+            uint64 hoursPaid;
+            bytes32 stateRoot;
+            bytes stateCid;
+        }
+        struct Request {
+            uint8 kind;
+            uint8 state;
+            uint64 machine;
+            uint256 lease;
+            address signer;
+            bytes32 encKey;
+            bytes32 evidence;
+            uint64 epoch;
+            uint64 requestedAt;
+        }
+        struct Signed {
+            bytes32 stateRoot;
+            bytes32 cidHash;
+            bytes32 seenBlockhash;
+            bytes sig;
+        }
+        event MachineRegistered(uint64 indexed machine, address indexed operator, uint8 kind, bytes32 machineId);
+        event LeaseCreated(uint256 indexed lease, address indexed renter, uint64 indexed machine, uint64 image, bytes32 nonce);
+        event Activated(uint256 indexed lease, address signer, bytes32 encKey);
+        event Checkpoint(uint256 indexed lease, uint64 version, bytes32 stateRoot, bytes stateCid, bool paid);
+        event AttestationRequested(uint256 indexed request, uint8 kind, uint64 machine, uint256 lease, bytes32 evidence);
+        function registerMachine(uint8 kind, bytes attestation, string endpoint, uint32 cpus, uint32 memGiB,
+            string gpu) external returns (uint64 m);
+        function machineBinding(address operator) external view returns (bytes32);
+        function setOffer(uint64 m, uint128 pricePerHour, bool available) external;
+        function depositBond() external payable;
+        function unbond(uint256 amount) external;
+        function claimUnbonded() external;
+        function createLease(uint64 m, uint64 image, bytes32 agentHash, uint8 minTcb, uint128 minBond,
+            uint128 relayFee) external payable returns (uint256 id);
+        function topUp(uint256 id) external payable;
+        function enclaveBinding(uint256 id, address signer, bytes32 encKey) external view returns (bytes32);
+        function activate(uint256 id, address signer, bytes32 encKey, bytes attestation) external;
+        function checkpointDigest(uint256 id, uint64 version, bytes32 stateRoot, bytes32 cidHash,
+            bytes32 seenBlockhash) external view returns (bytes32);
+        function checkpoint(uint256 id, uint64 version, bytes stateCid, bytes32 stateRoot, uint256 seenBlock,
+            bytes sig) external;
+        function reportEquivocation(uint256 id, uint64 version, Signed a, Signed b) external;
+        function terminate(uint256 id) external;
+        function exit(uint256 id) external;
+        function finish(uint256 id) external;
+        function migrate(uint256 id, uint64 to) external;
+        function recheck(uint256 id) external returns (uint8 status);
+        function assignAttestations(uint64 epoch, uint32[] members) external;
+        function recordAttestation(uint256 r, bool ok, bytes32 machineId) external returns (bool);
+        function expireRequest(uint256 r) external;
+        function withdraw(address to) external;
+        function payout(address account) external;
+        function activeSigner(uint256 id) external view returns (address);
+        function lease(uint256 id) external view returns (Lease);
+        function machine(uint64 m) external view returns (Machine);
+        function request(uint256 r) external view returns (Request);
+        function leaseCount() external view returns (uint256);
+        function machineCount() external view returns (uint256);
+        function requestCount() external view returns (uint256);
+        function pendingAttestations() external view returns (uint256[]);
+        function panel(uint64 epoch) external view returns (uint32[]);
+        function balanceOf(address account) external view returns (uint256);
+        function operators(address operator) external view returns (uint256 bond, uint256 unbonding, uint64 unbondAt,
+            uint64 slashedAt);
+        function machineIndex(bytes32 machineId) external view returns (uint64);
+        function blacklisted(bytes32 machineId) external view returns (bool);
+        function burned() external view returns (uint256);
+        function signerLease(address signer) external view returns (uint256);
+    }
+
+    interface ILimitedWallet {
+        struct Call {
+            address to;
+            uint256 value;
+            bytes data;
+        }
+        function configure(uint256 lease, uint128 dailyLimit, uint128 perTxLimit, address[] targets) external;
+        function revoke() external;
+        function execute(Call[] calls) external payable;
+        function executeDigest(Call[] calls, uint64 nonce, uint256 deadline) external view returns (bytes32);
+        function executeSigned(Call[] calls, uint256 deadline, bytes sig) external;
+        function config() external view returns (uint256 lease, uint128 dailyLimit, uint128 perTxLimit,
+            uint128 spentToday, uint64 nonce, address[] targets);
+    }
+
     interface IBLSHarness {
         function hashToG2(bytes message, bytes dst) external view returns (bytes);
         function expand(bytes message, bytes dst) external pure returns (bytes);

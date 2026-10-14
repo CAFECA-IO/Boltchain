@@ -170,6 +170,14 @@ fn build(g: &Genesis) -> Result<BTreeMap<Address, GenesisAccount>, GenesisBuildE
     // ADR 0011 §7 and ADR 0013; the public testnet gets them at its `tee` fork.
     if bolt_primitives::forks::active(g.config.chain_id, bolt_primitives::forks::TEE, 0) {
         b.deploy(MODELS, &artifacts::model_registry().bytecode, &[])?;
+        b.deploy(IMAGES, &artifacts::image_registry().bytecode, &[])?;
+        b.deploy(COLLATERAL, &artifacts::tee_collateral().bytecode, &[])?;
+        b.deploy(TDX, &artifacts::tdx_verifier().bytecode, &[])?;
+        b.deploy(LEASES, &artifacts::enclave_lease().bytecode, &[])?;
+        b.deploy(WALLET, &artifacts::limited_wallet().bytecode, &[])?;
+        if let Some([x, y]) = g.dev_tee_root {
+            b.call(COLLATERAL, ITeeCollateral::initDevRootCall { x, y })?;
+        }
     }
 
     // Dev chains: validators staked at genesis and their committee for epoch 0 (one seat each);

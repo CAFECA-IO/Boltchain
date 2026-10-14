@@ -41,3 +41,8 @@ artifact!(compute_market, "ComputeMarket.json");
 artifact!(bls_harness, "BLSHarness.json");
 artifact!(certificates, "Certificates.json");
 artifact!(model_registry, "ModelRegistry.json");
+artifact!(image_registry, "ImageRegistry.json");
+artifact!(tee_collateral, "TeeCollateral.json");
+artifact!(tdx_verifier, "TdxVerifier.json");
+artifact!(enclave_lease, "EnclaveLease.json");
+artifact!(limited_wallet, "LimitedWallet.json");
