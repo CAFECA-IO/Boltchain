@@ -282,6 +282,50 @@ fn quantity(v: &Value) -> Result<U256> {
     Ok(U256::from_str_radix(s.trim_start_matches("0x"), 16)?)
 }
 
+/// Largest gas limit a transaction may have (EIP-7825).
+pub const TX_GAS_CAP: u64 = 1 << 24;
+
+/// Delegates `signer`'s account to `delegate` (EIP-7702) and calls the account itself with
+/// `data` in the same transaction; waits for its receipt.
+pub fn send_delegated(
+    rpc_url: &str,
+    signer: &PrivateKeySigner,
+    delegate: Address,
+    data: Bytes,
+) -> Result<B256> {
+    use alloy_consensus::TxEip7702;
+    use alloy_eips::eip7702::Authorization;
+    use alloy_signer::SignerSync;
+    let from = signer.address();
+    let chain_id = quantity(&rpc(rpc_url, "eth_chainId", json!([]))?)?.to::<u64>();
+    let nonce =
+        quantity(&rpc(rpc_url, "eth_getTransactionCount", json!([from, "pending"]))?)?.to::<u64>();
+    let gas_price = quantity(&rpc(rpc_url, "eth_gasPrice", json!([]))?)?.to::<u128>();
+    let tip = 1_000_000u128;
+    // The sender is the authority: its authorization takes the nonce after the transaction's.
+    let auth = Authorization { chain_id: U256::from(chain_id), address: delegate, nonce: nonce + 1 };
+    let sig = signer.sign_hash_sync(&auth.signature_hash())?;
+    let signed = auth.into_signed(sig);
+    let mut tx = TxEip7702 {
+        chain_id,
+        nonce,
+        gas_limit: 500_000,
+        max_fee_per_gas: gas_price * 2 + tip,
+        max_priority_fee_per_gas: tip,
+        to: from,
+        value: U256::ZERO,
+        access_list: Default::default(),
+        authorization_list: vec![signed],
+        input: data,
+    };
+    let sig = signer.sign_transaction_sync(&mut tx)?;
+    let env: TxEnvelope = tx.into_signed(sig).into();
+    let raw = hex::encode_prefixed(env.encoded_2718());
+    let hash: B256 = serde_json::from_value(rpc(rpc_url, "eth_sendRawTransaction", json!([raw]))?)?;
+    println!("sent {hash}; waiting for inclusion…");
+    wait_receipt(rpc_url, hash)
+}
+
 /// Signs and sends a transaction; waits for its receipt. Returns the hash.
 pub fn send_tx(
     rpc_url: &str,
@@ -370,7 +414,8 @@ fn sign_call(
     let mut tx = TxEip1559 {
         chain_id,
         nonce,
-        gas_limit: gas + gas / 5,
+        // At most the per-transaction cap (EIP-7825).
+        gas_limit: (gas + gas / 5).min(TX_GAS_CAP.max(gas)),
         max_fee_per_gas: gas_price * 2 + tip,
         max_priority_fee_per_gas: tip,
         to,

@@ -64,5 +64,6 @@ pub mod p2p;
 pub mod relay;
 pub mod storage;
 pub mod swarm;
+pub mod tee;
 pub mod validator;
 pub mod wallet;

@@ -41,6 +41,20 @@ enum Command {
     /// which ones a provider serves.
     #[command(subcommand)]
     Model(compute::ModelCmd),
+    /// Agent runtime images and their measurements (ADR 0013).
+    #[command(subcommand)]
+    Image(boltchain::tee::ImageCmd),
+    /// Intel attestation collateral on chain: submit Intel's current documents, show them.
+    #[command(subcommand)]
+    Collateral(boltchain::tee::CollateralCmd),
+    /// TEE machine operators: register and offer machines, bond, activate leases, run a
+    /// (simulated) agent runtime.
+    #[command(subcommand)]
+    Enclave(boltchain::tee::EnclaveCmd),
+    /// Rent a TEE to run an AI agent: offers, leases, local verification, secrets, migration,
+    /// the agent's limited wallet.
+    #[command(subcommand)]
+    Lease(boltchain::tee::LeaseCmd),
     /// Verifier program for `--verifier-cmd`: re-runs a disputed compute job on an
     /// OpenAI-compatible backend and prints `fault`, `ok` or `abstain` (job from `BOLT_*`).
     Judge(compute::JudgeArgs),
@@ -138,6 +152,10 @@ fn main() -> Result<()> {
         Command::Provider(cmd) => compute::run_provider(cmd)?,
         Command::Job(cmd) => compute::run_job(cmd)?,
         Command::Model(cmd) => compute::run_model(cmd)?,
+        Command::Image(cmd) => boltchain::tee::run_image(cmd)?,
+        Command::Collateral(cmd) => boltchain::tee::run_collateral(cmd)?,
+        Command::Enclave(cmd) => boltchain::tee::run_enclave(cmd)?,
+        Command::Lease(cmd) => boltchain::tee::run_lease(cmd)?,
         Command::Judge(args) => {
             let env: std::collections::HashMap<String, String> = std::env::vars().collect();
             match compute::judge(&args, &env) {
@@ -292,7 +310,12 @@ fn make_dev_genesis(
         timestamp: 0,
         extra_data: extra.as_bytes().to_vec().into(),
         dev_validators,
-        dev_tee_root: None,
+        // Dev chains trust the simulated attestation PKI (ADR 0013), so `enclave runtime
+        // --simulate` machines verify.
+        dev_tee_root: dev.then(|| {
+            let (x, y) = bolt_attest::sim::SimIntel::dev().root_point();
+            [alloy_primitives::B256::from(x), alloy_primitives::B256::from(y)]
+        }),
         alloc,
     };
     g.validate()?;
