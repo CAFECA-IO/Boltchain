@@ -74,6 +74,7 @@ pub async fn run(args: DevnetArgs) -> Result<()> {
         pool: pool.clone(),
         client_version: crate::CLIENT_VERSION.to_string(),
         host: None,
+        relay: None,
         forwarder: None,
     };
     let (addr, handle) = bolt_rpc::start(args.rpc, ctx).await?;

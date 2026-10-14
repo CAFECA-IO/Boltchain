@@ -1575,6 +1575,14 @@ pub struct StorageArgs {
     /// it the validators do not vote on disputes.
     #[arg(long, value_name = "COMMAND")]
     pub verifier_cmd: Option<String>,
+    /// Relay signed actions of accounts without BOLT (`bolt_relay`: compute providers' signed
+    /// registrations, acceptances and receipts, enclave checkpoints), paying the gas from this
+    /// account key file and earning the fees those actions pay.
+    #[arg(long, value_name = "FILE")]
+    pub relay_wallet: Option<PathBuf>,
+    /// Smallest fee, in BOLT, the relay accepts per action.
+    #[arg(long, default_value = "0.001")]
+    pub relay_min_fee: String,
 }
 
 /// Runs a validator node until Ctrl-C.
@@ -1669,12 +1677,28 @@ pub async fn run(args: ValidatorArgs) -> Result<()> {
         crate::metrics::start(addr, chain.clone(), Some(pool.clone())).await?;
     }
     crate::metrics::spawn_status(chain.clone(), net.clone(), Some(pool.clone()));
+    let relay = match &args.storage.relay_wallet {
+        Some(f) => {
+            let s = crate::wallet::load_wallet(f)?;
+            let min = crate::wallet::parse_bolt(&args.storage.relay_min_fee)?;
+            let ip = if args.rpc.ip().is_unspecified() {
+                std::net::IpAddr::from([127, 0, 0, 1])
+            } else {
+                args.rpc.ip()
+            };
+            let r = crate::relay::Relay::new(format!("http://{ip}:{}", args.rpc.port()), s, min);
+            tracing::info!(account = %r.address(), "relaying signed actions (bolt_relay)");
+            Some(Arc::new(r) as Arc<dyn bolt_rpc::CallRelay>)
+        }
+        None => None,
+    };
     let ctx = bolt_rpc::RpcContext {
         chain: chain.clone(),
         pool: pool.clone(),
         client_version: crate::CLIENT_VERSION.to_string(),
         forwarder: None,
         host,
+        relay,
     };
     let (addr, handle) = bolt_rpc::start(args.rpc, ctx).await?;
     tracing::info!(%addr, keys = keys.len(), "JSON-RPC listening");

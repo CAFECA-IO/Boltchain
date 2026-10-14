@@ -60,6 +60,7 @@ pub mod keystore;
 pub mod metrics;
 pub mod miner;
 pub mod p2p;
+pub mod relay;
 pub mod storage;
 pub mod swarm;
 pub mod validator;

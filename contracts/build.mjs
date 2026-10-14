@@ -21,6 +21,7 @@ const WANT = [
   'src/SwarmStorage.sol:SwarmStorage',
   'src/ComputeMarket.sol:ComputeMarket',
   'src/Certificates.sol:Certificates',
+  'src/ModelRegistry.sol:ModelRegistry',
 ];
 
 const sources = {};

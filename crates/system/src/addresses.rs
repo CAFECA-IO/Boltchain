@@ -15,3 +15,15 @@ pub const REWARDS: Address = address!("0xB01700000000000000000000000000000000000
 pub const SWARM: Address = address!("0xB017000000000000000000000000000000000005");
 /// ComputeMarket (ADR 0011).
 pub const COMPUTE: Address = address!("0xB017000000000000000000000000000000000006");
+/// ModelRegistry (ADR 0011 §7).
+pub const MODELS: Address = address!("0xB017000000000000000000000000000000000007");
+/// ImageRegistry (ADR 0013).
+pub const IMAGES: Address = address!("0xB017000000000000000000000000000000000008");
+/// TeeCollateral (ADR 0013).
+pub const COLLATERAL: Address = address!("0xB017000000000000000000000000000000000009");
+/// TdxVerifier (ADR 0013).
+pub const TDX: Address = address!("0xB01700000000000000000000000000000000000a");
+/// EnclaveLease (ADR 0013).
+pub const LEASES: Address = address!("0xB01700000000000000000000000000000000000B");
+/// LimitedWallet, the EIP-7702 delegation target for agent accounts (ADR 0013 §7).
+pub const WALLET: Address = address!("0xB01700000000000000000000000000000000000C");

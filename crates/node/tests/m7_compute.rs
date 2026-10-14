@@ -1,10 +1,14 @@
 //! ADR 0011 from the command-line side: on a dev PoS chain (7 genesis validators on 3 nodes),
-//! a provider registers and serves jobs with an OpenAI-compatible backend (a mock here); a
-//! requester posts an encrypted prompt through its own node, the provider's node fetches it,
-//! the provider runs it and delivers an encrypted result, the requester reads it back and pays.
+//! a model is registered and a provider without any BOLT registers through a relay (a node with
+//! `bolt_relay`) and serves jobs with an OpenAI-compatible backend (a mock here). A requester
+//! posts an encrypted prompt open to any provider; the provider takes it through the relay, the
+//! requester's watcher adds it as a recipient of the input, the provider runs it and delivers an
+//! encrypted result with per-token log-probabilities, and the requester reads it back and pays.
+//! The relay is paid from the job, the provider from the rest.
+//!
 //! A second job is disputed: the verifier panel's nodes run `boltchain judge` (re-running on a
-//! backend that answers differently), the requester shares the files with the panel, and the
-//! certified verdict refunds the requester.
+//! backend whose model gives other tokens), the requester shares the files with the panel, and
+//! the certified verdict refunds the requester.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_signer_local::PrivateKeySigner;
@@ -21,7 +25,7 @@ use bolt_sync::ChainBlocks;
 use bolt_system::{abi::*, addresses::*, queries};
 use bolt_txpool::TxPool;
 use boltchain::{
-    compute::{NewJob, Provider, job_result, post_job},
+    compute::{NewJob, OpenPolicy, Provider, post_job, register_provider, watch_job},
     storage::{RpcHost, Storage, StorageConfig},
     validator::{Validator, ValidatorConfig},
 };
@@ -154,10 +158,35 @@ fn mock_backend(reply: fn(&str) -> String) -> String {
                 .as_str()
                 .unwrap()
                 .to_owned();
+            // Tokens: the words of the reply (later ones with their leading space), each very
+            // likely, with two unlikely alternatives.
+            let content = reply(&last);
+            let tokens: Vec<String> = content
+                .split(' ')
+                .enumerate()
+                .map(|(i, w)| if i == 0 { w.to_string() } else { format!(" {w}") })
+                .collect();
+            let mut choice = serde_json::json!({"index": 0, "message": {"role": "assistant", "content": content}});
+            if req["logprobs"].as_bool() == Some(true) {
+                let k = req["top_logprobs"].as_u64().unwrap_or(1) as usize;
+                let content: Vec<serde_json::Value> = tokens
+                    .iter()
+                    .map(|t| {
+                        let top: Vec<serde_json::Value> =
+                            [(t.clone(), -0.1), ("<alt-a>".into(), -3.0), ("<alt-b>".into(), -3.5)]
+                                .into_iter()
+                                .take(k)
+                                .map(|(x, l)| serde_json::json!({"token": x, "logprob": l}))
+                                .collect();
+                        serde_json::json!({"token": t, "logprob": -0.1, "top_logprobs": top})
+                    })
+                    .collect();
+                choice["logprobs"] = serde_json::json!({"content": content});
+            }
             let resp = serde_json::json!({
                 "model": req["model"],
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": reply(&last)}}],
-                "usage": {"prompt_tokens": 12, "completion_tokens": 7}
+                "choices": [choice],
+                "usage": {"prompt_tokens": 12, "completion_tokens": tokens.len()}
             })
             .to_string();
             let _ = write!(
@@ -217,6 +246,14 @@ async fn a_prompt_is_served_by_a_provider_and_paid() {
             },
         );
         let s = tokio::spawn(storage.clone().run(srx));
+        // The first node relays signed actions, paying gas from validator owner 0's account.
+        let relay = rpcs.is_empty().then(|| {
+            Arc::new(boltchain::relay::Relay::new(
+                rpc_url.clone(),
+                owner(0),
+                U256::from(10u128.pow(15)),
+            )) as Arc<dyn bolt_rpc::CallRelay>
+        });
         let ctx = bolt_rpc::RpcContext {
             chain: chain.clone(),
             pool: pool.clone(),
@@ -226,6 +263,7 @@ async fn a_prompt_is_served_by_a_provider_and_paid() {
                 storage: storage.clone(),
                 rt: tokio::runtime::Handle::current(),
             })),
+            relay,
         };
         let (_, handle) =
             bolt_rpc::start(format!("127.0.0.1:{port}").parse().unwrap(), ctx).await.unwrap();
@@ -261,42 +299,57 @@ async fn a_prompt_is_served_by_a_provider_and_paid() {
     wait_until("block 1", 60, || nodes.iter().all(|n| head(n) >= 1)).await;
 
     let backend = mock_backend(|last| format!("echo: {last}"));
-    let provider = owner(1);
+    // A provider with no BOLT at all.
+    let provider = PrivateKeySigner::random();
     let requester = funded();
-    let (req_rpc, prov_rpc) = (rpcs[0].clone(), rpcs[1].clone());
+    let relayer = owner(0).address();
+    let (req_rpc, prov_rpc, relay_rpc) = (rpcs[0].clone(), rpcs[1].clone(), rpcs[0].clone());
     let (p2, r2, backend1) = (provider.clone(), requester.clone(), backend.clone());
+    let milli = U256::from(10u128.pow(15));
     let outcome = tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, serde_json::Value)> {
-        // The provider registers its encryption key (paying gas itself).
-        let (_, pk) = boltchain::swarm::vault_key(&p2);
-        let reg = IComputeMarket::registerCall {
-            encKey: alloy_primitives::B256::from(pk.to_bytes()),
-            peerId: Bytes::from_static(b"provider"),
+        // Model 1 is registered by the requester.
+        let reg = IModelRegistry::registerCall {
+            name: "mock model".into(),
+            weights: Bytes::from_static(b"\x01\x55\x12\x20mock-weights-cid-mock-weights-cid"),
+            tokenizer: Bytes::new(),
+            runtime: "mock".into(),
+            parameters: 1_000_000,
+            vramMiB: 1,
         };
-        boltchain::wallet::send_tx(&prov_rpc, &p2, COMPUTE, U256::ZERO, reg.abi_encode().into())?;
-        // The requester posts a prompt through its own node.
+        boltchain::wallet::send_tx(&req_rpc, &r2, MODELS, U256::ZERO, reg.abi_encode().into())?;
+        // The provider registers through the relay (0.001 BOLT, repaid from its first earnings).
+        let relay = (relay_rpc.clone(), milli);
+        register_provider(&prov_rpc, &p2, b"provider", Some(&relay))?;
+        // The requester posts a prompt open to any provider, through its own node.
         let job = NewJob {
-            provider: p2.address(),
+            provider: Address::ZERO,
             model: 1,
             request: serde_json::json!({"messages": [{"role": "user", "content": "hello Boltchain"}], "max_tokens": 64}),
-            price_in: U256::from(10u128.pow(15)),
-            price_out: U256::from(2 * 10u128.pow(15)),
+            price_in: U256::from(10u128.pow(18)),
+            price_out: U256::from(2 * 10u128.pow(18)),
             max_in: 1000,
             max_out: 64,
             deadline: 3600,
             window: 600,
         };
         let id = post_job(&req_rpc, &r2, &job)?;
-        // The provider's scan accepts, runs and delivers.
+        // The provider takes it through the relay; the requester's watcher shares the input;
+        // the provider runs it and delivers, again through the relay.
+        let watcher = {
+            let (req_rpc, r2) = (req_rpc.clone(), r2.clone());
+            std::thread::spawn(move || watch_job(&req_rpc, &r2, id, std::time::Duration::from_millis(500)))
+        };
         let models = [(1u64, "mock-model".to_string())].into_iter().collect();
-        let mut p = Provider::new(p2.clone(), &prov_rpc, &backend1, models);
-        for _ in 0..30 {
+        let mut p = Provider::new(p2.clone(), &prov_rpc, &backend1, models)
+            .with_open(OpenPolicy::default())
+            .with_relay(&relay_rpc, milli);
+        for _ in 0..60 {
             if p.round()?.contains(&id) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
-        // The requester reads the result and pays.
-        let v = job_result(&req_rpc, &r2, id)?;
+        let v = watcher.join().unwrap()?;
         let settle = IComputeMarket::settleCall { id: U256::from(id) };
         boltchain::wallet::send_tx(&req_rpc, &r2, COMPUTE, U256::ZERO, settle.abi_encode().into())?;
         Ok((id, v))
@@ -307,23 +360,36 @@ async fn a_prompt_is_served_by_a_provider_and_paid() {
     let (id, result) = outcome;
     assert_eq!(result["choices"][0]["message"]["content"], "echo: hello Boltchain");
     assert_eq!(result["model"], "mock-model");
+    assert_eq!(result["choices"][0]["logprobs"]["content"].as_array().unwrap().len(), 3);
     let c0 = nodes[0].chain.clone();
     let j = view(&c0, COMPUTE, IComputeMarket::jobCall { id: U256::from(id) });
-    assert_eq!((j.state, j.tokensIn, j.tokensOut), (5, 12, 7));
-    // Paid (12 × 0.001 + 7 × 0.002) / 1000 = 0.000026 BOLT; 20% of it builds the provider's bond.
-    let cost = U256::from(26u128 * 10u128.pow(12));
-    let bond = cost * U256::from(2000) / U256::from(10000);
+    assert_eq!((j.state, j.tokensIn, j.tokensOut, j.provider), (5, 12, 3, provider.address()));
+    let r = view(&c0, COMPUTE, IComputeMarket::relaysCall { id: U256::from(id) });
+    assert_eq!((r.acceptRelayer, r.deliverRelayer), (relayer, relayer));
+    // Cost 12 × 1 / 1000 + 3 × 2 / 1000 = 0.018 BOLT: 0.002 to the relay for the acceptance and
+    // the receipt, 0.001 repays the registration, 20% of the remaining 0.015 builds the bond.
+    let cost = U256::from(18) * milli;
+    let earned = cost - U256::from(3) * milli;
+    let bond = earned * U256::from(2000) / U256::from(10000);
+    assert_eq!(
+        view(&c0, COMPUTE, IComputeMarket::balanceOfCall { account: relayer }),
+        U256::from(3) * milli
+    );
     assert_eq!(
         view(&c0, COMPUTE, IComputeMarket::balanceOfCall { account: provider.address() }),
-        cost - bond
+        earned - bond
     );
     assert_eq!(
         view(&c0, COMPUTE, IComputeMarket::providerCall { p: provider.address() }).bond,
         bond
     );
+    assert!(
+        nodes[0].chain.store().reader().unwrap().account(&provider.address()).unwrap().is_none(),
+        "the provider never held BOLT"
+    );
 
     // A second job, disputed by the requester.
-    let (req_rpc, prov_rpc) = (rpcs[0].clone(), rpcs[1].clone());
+    let (req_rpc, prov_rpc, relay_rpc) = (rpcs[0].clone(), rpcs[1].clone(), rpcs[0].clone());
     let (p2, r2, backend2) = (provider.clone(), requester.clone(), backend.clone());
     let id2 = tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
         let job = NewJob {
@@ -339,7 +405,8 @@ async fn a_prompt_is_served_by_a_provider_and_paid() {
         };
         let id = post_job(&req_rpc, &r2, &job)?;
         let models = [(1u64, "mock-model".to_string())].into_iter().collect();
-        let mut p = Provider::new(p2.clone(), &prov_rpc, &backend2, models);
+        let mut p = Provider::new(p2.clone(), &prov_rpc, &backend2, models)
+            .with_relay(&relay_rpc, U256::from(10u128.pow(15)));
         for _ in 0..30 {
             if p.round()?.contains(&id) {
                 break;

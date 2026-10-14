@@ -153,11 +153,13 @@ sol! {
             uint64 maxIn, uint64 maxOut, uint64 deadline, uint64 window, uint128 relayFee)
             external payable returns (uint256 id);
         function accept(uint256 id) external;
-        function acceptFor(uint256 id, address provider_, uint256 deadline, bytes sig) external;
+        function acceptFor(uint256 id, address provider_, uint128 fee, uint256 deadline, bytes sig) external;
         function shareInput(uint256 id, bytes input) external;
         function deliver(uint256 id, bytes output, uint64 tokensIn, uint64 tokensOut) external;
         function deliverFor(uint256 id, address provider_, bytes output, uint64 tokensIn, uint64 tokensOut,
-            uint256 deadline, bytes sig) external;
+            uint128 fee, uint256 deadline, bytes sig) external;
+        function relays(uint256 id) external view returns (address acceptRelayer, uint128 acceptFee,
+            address deliverRelayer, uint128 deliverFee);
         function settle(uint256 id) external;
         function refund(uint256 id) external;
         function dispute(uint256 id, bytes reason) external payable;
@@ -172,6 +174,28 @@ sol! {
         function balanceOf(address account) external view returns (uint256);
         function withdraw(address to) external;
         function payout(address account) external;
+    }
+
+    interface IModelRegistry {
+        struct Model {
+            address registrant;
+            uint64 registeredAt;
+            uint64 parameters;
+            uint32 vramMiB;
+            string name;
+            bytes weights;
+            bytes tokenizer;
+            string runtime;
+        }
+        event ModelRegistered(uint64 indexed id, address indexed registrant, string name, bytes weights);
+        function register(string name, bytes weights, bytes tokenizer, string runtime, uint64 parameters,
+            uint32 vramMiB) external returns (uint64 id);
+        function setSupport(uint64 id, bool serving) external;
+        function exists(uint64 id) external view returns (bool);
+        function model(uint64 id) external view returns (Model);
+        function modelCount() external view returns (uint256);
+        function serves(uint64 id, address provider) external view returns (bool);
+        function providerCount(uint64 id) external view returns (uint32);
     }
 
     interface IBLSHarness {

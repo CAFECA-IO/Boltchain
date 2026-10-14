@@ -128,13 +128,17 @@ impl Judge for AlwaysFault {
 }
 
 fn tx(s: &PrivateKeySigner, nonce: u64, value: U256, data: Vec<u8>) -> TxEnvelope {
+    tx_to(s, nonce, COMPUTE, value, data)
+}
+
+fn tx_to(s: &PrivateKeySigner, nonce: u64, to: Address, value: U256, data: Vec<u8>) -> TxEnvelope {
     let mut t = TxEip1559 {
         chain_id: 1337,
         nonce,
         gas_limit: 1_000_000,
         max_fee_per_gas: 5_000_000_000,
         max_priority_fee_per_gas: 1_000_000,
-        to: TxKind::Call(COMPUTE),
+        to: TxKind::Call(to),
         value,
         input: data.into(),
         ..Default::default()
@@ -231,7 +235,16 @@ async fn a_dispute_is_decided_by_the_verifier_panel() {
         relayFee: 0,
     };
     let bolt = U256::from(10u128.pow(18));
-    submit(&nodes, &tx(&requester, 0, bolt * U256::from(2), post.abi_encode()));
+    let model = IModelRegistry::registerCall {
+        name: "m".into(),
+        weights: Bytes::from_static(b"w"),
+        tokenizer: Bytes::new(),
+        runtime: "r".into(),
+        parameters: 1,
+        vramMiB: 1,
+    };
+    submit(&nodes, &tx_to(&requester, 0, MODELS, U256::ZERO, model.abi_encode()));
+    submit(&nodes, &tx(&requester, 1, bolt * U256::from(2), post.abi_encode()));
     wait_until("job posted", 60, || {
         view(&c0, COMPUTE, IComputeMarket::jobCountCall {}) == U256::from(1)
     })
@@ -252,7 +265,7 @@ async fn a_dispute_is_decided_by_the_verifier_panel() {
 
     // The requester disputes; the next epoch's first block assigns a verifier panel.
     let dispute = IComputeMarket::disputeCall { id, reason: Bytes::from_static(b"reason-cid") };
-    submit(&nodes, &tx(&requester, 1, bolt, dispute.abi_encode()));
+    submit(&nodes, &tx(&requester, 2, bolt, dispute.abi_encode()));
     wait_until("panel assigned", 60, || {
         view(&c0, COMPUTE, IComputeMarket::disputesCall { id }).panelEpoch != 0
     })

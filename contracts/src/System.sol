@@ -15,6 +15,14 @@ library Sys {
     /// SwarmStorage (was SwarmStorage; ADR 0014).
     address internal constant HISTORY = 0xb017000000000000000000000000000000000005;
     address internal constant COMPUTE = 0xB017000000000000000000000000000000000006;
+    /// ModelRegistry (ADR 0011 §7).
+    address internal constant MODELS = 0xb017000000000000000000000000000000000007;
+    /// ImageRegistry, TeeCollateral, TdxVerifier, EnclaveLease, LimitedWallet (ADR 0013).
+    address internal constant IMAGES = 0xB017000000000000000000000000000000000008;
+    address internal constant COLLATERAL = 0xB017000000000000000000000000000000000009;
+    address internal constant TDX = 0xB01700000000000000000000000000000000000a;
+    address internal constant LEASES = 0xB01700000000000000000000000000000000000B;
+    address internal constant WALLET = 0xB01700000000000000000000000000000000000C;
 
     uint256 internal constant MIN_STAKE = 64 ether;
     /// Unbonding period, in epochs (14 days); also the evidence window.

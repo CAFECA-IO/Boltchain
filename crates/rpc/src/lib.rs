@@ -41,6 +41,16 @@ pub struct RpcContext {
     /// Block hosting for SwarmStorage deals (ADR 0014): `bolt_hostBlocks` / `bolt_getBlocks`.
     /// `None`: the methods answer with an error (the node was started without `--rpc-storage`).
     pub host: Option<Arc<dyn BlockHost>>,
+    /// Submits signed actions of accounts without BOLT (`bolt_relay`, ADR 0011 / 0013): the
+    /// node pays the gas and the action pays it a fee. `None`: relaying is off.
+    pub relay: Option<Arc<dyn CallRelay>>,
+}
+
+/// Sends calls on behalf of others from the node's relay account (`bolt_relay`).
+pub trait CallRelay: Send + Sync + std::fmt::Debug + 'static {
+    /// Checks that `data` to `to` is a call this relay accepts (a known action paying at least
+    /// its minimum fee) and would succeed, then sends it; returns the transaction hash.
+    fn relay(&self, to: Address, data: Vec<u8>) -> Result<B256, String>;
 }
 
 /// Stores and fetches IPFS blocks for a user's SwarmStorage deals (ADR 0014).
@@ -294,6 +304,12 @@ pub fn module(ctx: RpcContext) -> RpcModule<RpcContext> {
         }
         let got = h.fetch(cids, deal, root).map_err(|e| err(-32000, e))?;
         Ok(got.into_iter().map(Bytes::from).collect())
+    });
+
+    method!("bolt_relay", |p, c| -> RpcResult<B256> {
+        let (to, data): (Address, Bytes) = p.parse()?;
+        let r = c.relay.as_ref().ok_or_else(|| err(-32601, "this node does not relay"))?;
+        r.relay(to, data.to_vec()).map_err(|e| err(-32000, e))
     });
 
     method!("bolt_verifierKeys", |p, c| -> RpcResult<Vec<Option<String>>> {

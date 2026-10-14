@@ -39,10 +39,19 @@ pub const TESTNET_CHAIN_ID: u64 = 8018;
 /// started with `HistoryRegistry` and switches at its `swarm` fork.
 pub const SWARM: &str = "swarm";
 
+/// ADR 0011 §7 and ADR 0013: `ModelRegistry`, the TEE contracts and the current `ComputeMarket`
+/// (relay fees). Part of the genesis rules of every chain except the public testnet.
+pub const TEE: &str = "tee";
+
 /// Init code of `HistoryRegistry` as deployed by the public testnet's genesis (2026-09-26).
 /// Pinned: the testnet genesis hash depends on it.
 pub const TESTNET_GENESIS_HISTORY_REGISTRY: &[u8] =
     include_bytes!("../../../contracts/forks/8018-genesis/HistoryRegistry.initcode");
+
+/// Init code of `ComputeMarket` as deployed by the public testnet's genesis (2026-09-26).
+/// Pinned: the testnet genesis hash depends on it.
+pub const TESTNET_GENESIS_COMPUTE_MARKET: &[u8] =
+    include_bytes!("../../../contracts/forks/8018-genesis/ComputeMarket.initcode");
 
 /// Runtime code of `SwarmStorage` installed by the testnet's `swarm` fork. Pinned (never rebuilt):
 /// a node replaying the fork block must install exactly these bytes.
@@ -52,15 +61,22 @@ pub const TESTNET_SWARM_STORAGE: &[u8] =
 /// Activation of the testnet's `swarm` fork: the first block of an epoch (600-block epochs).
 pub const TESTNET_SWARM_ACTIVATION: u64 = 2_401;
 
-const TESTNET_FORKS: &[Fork] = &[Fork {
-    name: SWARM,
-    activation: TESTNET_SWARM_ACTIVATION,
-    changes: &[IrregularChange {
-        address: alloy_primitives::address!("0xB017000000000000000000000000000000000005"),
-        code: Some(TESTNET_SWARM_STORAGE),
-        storage: &[],
-    }],
-}];
+/// Activation of the testnet's `tee` fork (set when the release that carries it is cut; until
+/// then far in the future).
+pub const TESTNET_TEE_ACTIVATION: u64 = u64::MAX;
+
+const TESTNET_FORKS: &[Fork] = &[
+    Fork {
+        name: SWARM,
+        activation: TESTNET_SWARM_ACTIVATION,
+        changes: &[IrregularChange {
+            address: alloy_primitives::address!("0xB017000000000000000000000000000000000005"),
+            code: Some(TESTNET_SWARM_STORAGE),
+            storage: &[],
+        }],
+    },
+    Fork { name: TEE, activation: TESTNET_TEE_ACTIVATION, changes: &[] },
+];
 
 /// Hard forks of a chain, in activation order.
 pub fn forks(chain_id: u64) -> &'static [Fork] {
@@ -129,7 +145,8 @@ fn hashes(genesis: &B256, activations: &[u64]) -> Vec<[u8; 4]> {
 
 /// Distinct activation heights, ascending (forks at genesis do not count).
 fn activations(forks: &[Fork]) -> Vec<u64> {
-    let mut a: Vec<u64> = forks.iter().map(|f| f.activation).filter(|a| *a > 0).collect();
+    let mut a: Vec<u64> =
+        forks.iter().map(|f| f.activation).filter(|a| *a > 0 && *a != u64::MAX).collect();
     a.sort_unstable();
     a.dedup();
     a

@@ -37,6 +37,10 @@ enum Command {
     /// AI compute market, requester side: post a prompt, read the result, approve or dispute.
     #[command(subcommand)]
     Job(compute::JobCmd),
+    /// AI model registry (ADR 0011): register a model by its weights CID, list models, declare
+    /// which ones a provider serves.
+    #[command(subcommand)]
+    Model(compute::ModelCmd),
     /// Verifier program for `--verifier-cmd`: re-runs a disputed compute job on an
     /// OpenAI-compatible backend and prints `fault`, `ok` or `abstain` (job from `BOLT_*`).
     Judge(compute::JudgeArgs),
@@ -133,6 +137,7 @@ fn main() -> Result<()> {
         Command::Storage(cmd) => swarm::run(cmd)?,
         Command::Provider(cmd) => compute::run_provider(cmd)?,
         Command::Job(cmd) => compute::run_job(cmd)?,
+        Command::Model(cmd) => compute::run_model(cmd)?,
         Command::Judge(args) => {
             let env: std::collections::HashMap<String, String> = std::env::vars().collect();
             match compute::judge(&args, &env) {

@@ -159,8 +159,18 @@ fn build(g: &Genesis) -> Result<BTreeMap<Address, GenesisAccount>, GenesisBuildE
         let init = Bytes::from_static(bolt_primitives::forks::TESTNET_GENESIS_HISTORY_REGISTRY);
         b.deploy(SWARM, &init, &[])?;
     }
-    // ADR 0011; the public testnet gets it from its compute fork instead.
-    b.deploy(COMPUTE, &artifacts::compute_market().bytecode, &[])?;
+    // ADR 0011. The public testnet keeps the version its genesis was built with; it gets the
+    // current one at its `tee` fork.
+    if g.config.chain_id == bolt_primitives::forks::TESTNET_CHAIN_ID {
+        let init = Bytes::from_static(bolt_primitives::forks::TESTNET_GENESIS_COMPUTE_MARKET);
+        b.deploy(COMPUTE, &init, &[])?;
+    } else {
+        b.deploy(COMPUTE, &artifacts::compute_market().bytecode, &[])?;
+    }
+    // ADR 0011 §7 and ADR 0013; the public testnet gets them at its `tee` fork.
+    if bolt_primitives::forks::active(g.config.chain_id, bolt_primitives::forks::TEE, 0) {
+        b.deploy(MODELS, &artifacts::model_registry().bytecode, &[])?;
+    }
 
     // Dev chains: validators staked at genesis and their committee for epoch 0 (one seat each);
     // PoS from block 1. Their stake is part of the genesis supply.

@@ -40,3 +40,4 @@ artifact!(swarm_storage, "SwarmStorage.json");
 artifact!(compute_market, "ComputeMarket.json");
 artifact!(bls_harness, "BLSHarness.json");
 artifact!(certificates, "Certificates.json");
+artifact!(model_registry, "ModelRegistry.json");

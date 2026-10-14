@@ -26,6 +26,21 @@ fn market() -> Market {
     let requester = Address::repeat_byte(0xa2);
     evm.fund(relayer, bolt(100_000));
     evm.fund(requester, bolt(100_000));
+    // Model 1, which the jobs below name.
+    let id = evm.call(
+        requester,
+        MODELS,
+        U256::ZERO,
+        IModelRegistry::registerCall {
+            name: "test model".into(),
+            weights: Bytes::from_static(b"weights-cid"),
+            tokenizer: Bytes::new(),
+            runtime: "llama.cpp".into(),
+            parameters: 8_000_000_000,
+            vramMiB: 8192,
+        },
+    );
+    assert_eq!(id, 1);
     Market { evm, provider: PrivateKeySigner::random(), relayer, requester }
 }
 
@@ -94,23 +109,31 @@ impl Market {
         )
     }
 
-    fn accept_signed(&mut self, id: U256) -> bool {
+    /// The provider's signed acceptance, submitted by `by` for `fee`.
+    fn accept_signed_by(&mut self, by: Address, id: U256, fee: u128) -> bool {
         let d = self.deadline();
-        let sig = self.sign("accept", id.abi_encode(), d);
+        let sig = self.sign("accept", (id, fee).abi_encode_params(), d);
         let p = self.provider.address();
         self.evm.try_call(
-            self.requester,
+            by,
             COMPUTE,
             U256::ZERO,
-            IComputeMarket::acceptForCall { id, provider_: p, deadline: U256::from(d), sig },
+            IComputeMarket::acceptForCall { id, provider_: p, fee, deadline: U256::from(d), sig },
         )
     }
 
-    fn deliver_signed(&mut self, id: U256, tokens_in: u64, tokens_out: u64) {
+    fn accept_signed(&mut self, id: U256) -> bool {
+        self.accept_signed_by(self.requester, id, 0)
+    }
+
+    fn deliver_signed_fee(&mut self, id: U256, tokens_in: u64, tokens_out: u64, fee: u128) {
         let d = self.deadline();
         let out = Bytes::from_static(b"envelope-cid-out");
-        let sig =
-            self.sign("deliver", (id, out.clone(), tokens_in, tokens_out).abi_encode_params(), d);
+        let sig = self.sign(
+            "deliver",
+            (id, out.clone(), tokens_in, tokens_out, fee).abi_encode_params(),
+            d,
+        );
         let p = self.provider.address();
         self.evm.call(
             self.relayer,
@@ -122,10 +145,15 @@ impl Market {
                 output: out,
                 tokensIn: tokens_in,
                 tokensOut: tokens_out,
+                fee,
                 deadline: U256::from(d),
                 sig,
             },
         );
+    }
+
+    fn deliver_signed(&mut self, id: U256, tokens_in: u64, tokens_out: u64) {
+        self.deliver_signed_fee(id, tokens_in, tokens_out, 0)
     }
 
     fn balance_in_market(&mut self, a: Address) -> U256 {
@@ -193,22 +221,36 @@ fn signatures_are_bound_to_signer_action_and_nonce() {
     let p = m.provider.address();
     let d = m.deadline();
     // A signature for another action does not accept the job.
-    let wrong = m.sign("deliver", id.abi_encode(), d);
+    let wrong = m.sign("deliver", (id, 0u128).abi_encode_params(), d);
     assert!(!m.evm.try_call(
         m.requester,
         COMPUTE,
         U256::ZERO,
-        IComputeMarket::acceptForCall { id, provider_: p, deadline: U256::from(d), sig: wrong },
+        IComputeMarket::acceptForCall {
+            id,
+            provider_: p,
+            fee: 0,
+            deadline: U256::from(d),
+            sig: wrong
+        },
     ));
-    let sig = m.sign("accept", id.abi_encode(), d);
-    let call = IComputeMarket::acceptForCall { id, provider_: p, deadline: U256::from(d), sig };
+    // A fee the provider did not sign for is refused.
+    let sig = m.sign("accept", (id, 0u128).abi_encode_params(), d);
+    let call =
+        IComputeMarket::acceptForCall { id, provider_: p, fee: 0, deadline: U256::from(d), sig };
+    assert!(!m.evm.try_call(
+        m.requester,
+        COMPUTE,
+        U256::ZERO,
+        IComputeMarket::acceptForCall { fee: 10u128.pow(16), ..call.clone() },
+    ));
     assert!(m.evm.try_call(m.requester, COMPUTE, U256::ZERO, call.clone()));
     // Replayed on a second job: the nonce moved on.
     let id2 = m.post(Address::ZERO);
     let replay = IComputeMarket::acceptForCall { id: id2, ..call };
     assert!(!m.evm.try_call(m.requester, COMPUTE, U256::ZERO, replay));
     // Expired deadline.
-    let sig = m.sign("accept", id2.abi_encode(), m.evm.timestamp - 1);
+    let sig = m.sign("accept", (id2, 0u128).abi_encode_params(), m.evm.timestamp - 1);
     assert!(!m.evm.try_call(
         m.requester,
         COMPUTE,
@@ -216,6 +258,7 @@ fn signatures_are_bound_to_signer_action_and_nonce() {
         IComputeMarket::acceptForCall {
             id: id2,
             provider_: p,
+            fee: 0,
             deadline: U256::from(m.evm.timestamp - 1),
             sig
         },
@@ -367,4 +410,68 @@ fn bond_is_capped_from_earnings() {
     assert_eq!(m.balance_in_market(p), bolt(107 * 3_000 - 64_000));
     // Bond larger: larger jobs (5 + 10 x 64 BOLT).
     assert_eq!(m.evm.view(COMPUTE, IComputeMarket::jobLimitCall { p }), bolt(645_000));
+}
+
+#[test]
+fn relayers_of_signed_actions_are_paid_from_the_job() {
+    let mut m = market();
+    m.register_via_relayer(U256::ZERO);
+    let p = m.provider.address();
+    let id = m.post(Address::ZERO);
+    // A relayer submits the provider's acceptance for 0.05 BOLT, and its receipt for 0.05 BOLT.
+    let relayer = m.relayer;
+    assert!(!m.accept_signed_by(relayer, id, 2 * 10u128.pow(17)), "above MAX_RELAY_FEE");
+    assert!(m.accept_signed_by(relayer, id, 5 * 10u128.pow(16)));
+    m.deliver_signed_fee(id, 500, 1000, 5 * 10u128.pow(16));
+    let r = m.evm.view(COMPUTE, IComputeMarket::relaysCall { id });
+    assert_eq!((r.acceptRelayer, r.deliverRelayer), (relayer, relayer));
+    m.evm.call(m.requester, COMPUTE, U256::ZERO, IComputeMarket::settleCall { id });
+    // 2.5 BOLT of cost: 0.1 to the relayer, then 20% of 2.4 to the bond and 1.92 to the provider.
+    assert_eq!(m.balance_in_market(relayer), bolt(100));
+    assert_eq!(m.bond(), bolt(480));
+    assert_eq!(m.balance_in_market(p), bolt(1_920));
+}
+
+#[test]
+fn jobs_name_a_registered_model() {
+    let mut m = market();
+    let deadline = m.evm.timestamp + 86_400;
+    let post = |model| IComputeMarket::postCall {
+        provider_: Address::ZERO,
+        model,
+        input: Bytes::new(),
+        priceIn: 1,
+        priceOut: 1,
+        maxIn: 1,
+        maxOut: 1,
+        deadline,
+        window: 3600,
+        relayFee: 0,
+    };
+    let r = m.requester;
+    assert!(!m.evm.try_call(r, COMPUTE, bolt(1), post(2)), "model 2 is not registered");
+    assert!(!m.evm.try_call(r, COMPUTE, bolt(1), post(0)));
+    assert!(m.evm.try_call(r, COMPUTE, bolt(1), post(1)));
+    // The same weights, tokenizer and runtime cannot be registered twice; providers declare
+    // which models they serve.
+    assert!(!m.evm.try_call(
+        r,
+        MODELS,
+        U256::ZERO,
+        IModelRegistry::registerCall {
+            name: "again".into(),
+            weights: Bytes::from_static(b"weights-cid"),
+            tokenizer: Bytes::new(),
+            runtime: "llama.cpp".into(),
+            parameters: 1,
+            vramMiB: 1,
+        },
+    ));
+    let p = m.provider.address();
+    m.evm.fund(p, bolt(1_000));
+    m.evm.call(p, MODELS, U256::ZERO, IModelRegistry::setSupportCall { id: 1, serving: true });
+    m.evm.call(p, MODELS, U256::ZERO, IModelRegistry::setSupportCall { id: 1, serving: true });
+    assert_eq!(m.evm.view(MODELS, IModelRegistry::providerCountCall { id: 1 }), 1);
+    let model = m.evm.view(MODELS, IModelRegistry::modelCall { id: 1 });
+    assert_eq!((model.name.as_str(), model.vramMiB), ("test model", 8192));
 }

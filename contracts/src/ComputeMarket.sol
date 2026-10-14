@@ -30,6 +30,8 @@ contract ComputeMarket is SystemContract {
     uint256 public constant BOND_MULTIPLE = 10;
     /// Largest fee a relayer may charge for registering a provider.
     uint256 public constant MAX_REGISTRATION_FEE = 1 ether;
+    /// Largest fee a relayer may charge for submitting a provider's signed acceptance or receipt.
+    uint256 public constant MAX_RELAY_FEE = 0.1 ether;
     /// Deposit to open a dispute (returned if the panel finds the provider at fault).
     uint256 public constant DISPUTE_DEPOSIT = 1 ether;
     /// Share of the bond a provider loses when a panel finds it at fault.
@@ -97,6 +99,19 @@ contract ComputeMarket is SystemContract {
 
     Job[] internal jobs;
 
+    /// Relayers that submitted a provider's signed acceptance and receipt, and their fees. Paid
+    /// out of the job's cost (before the provider's share) when the job settles; nothing if it
+    /// does not (a relayer takes the provider's risk). Kept apart from `Job` so jobs stored by
+    /// earlier versions keep their layout.
+    struct Relay {
+        address acceptRelayer;
+        uint128 acceptFee;
+        address deliverRelayer;
+        uint128 deliverFee;
+    }
+
+    mapping(uint256 => Relay) public relays;
+
     // ------------------------------------------------------------------ disputes and panels
 
     struct Dispute {
@@ -138,6 +153,7 @@ contract ComputeMarket is SystemContract {
     error OverLimit();
     error TransferFailed();
     error Exiting();
+    error UnknownModel();
 
     // ------------------------------------------------------------------ signatures
 
@@ -281,6 +297,7 @@ contract ComputeMarket is SystemContract {
         uint128 relayFee
     ) external payable returns (uint256 id) {
         if (window < MIN_WINDOW || window > MAX_WINDOW || deadline <= block.timestamp) revert BadParams();
+        if (!_modelExists(model)) revert UnknownModel();
         uint256 maxCost = _cost(maxIn, priceIn) + _cost(maxOut, priceOut);
         if (msg.value < maxCost + relayFee || msg.value > type(uint128).max) revert BadParams();
         id = jobs.length;
@@ -330,10 +347,17 @@ contract ComputeMarket is SystemContract {
         _accept(id, msg.sender);
     }
 
-    /// Takes the job for `provider` from its signature (submitted by anyone, e.g. the requester).
-    function acceptFor(uint256 id, address provider_, uint256 deadline, bytes calldata sig) external {
-        _verify("accept", provider_, abi.encode(id), deadline, sig);
+    /// Takes the job for `provider` from its signature, submitted by anyone (the requester, or a
+    /// relayer for a provider without BOLT). The provider agrees to `fee` for the caller, paid
+    /// from the job's cost when it settles.
+    function acceptFor(uint256 id, address provider_, uint128 fee, uint256 deadline, bytes calldata sig) external {
+        if (fee > MAX_RELAY_FEE) revert FeeTooHigh();
+        _verify("accept", provider_, abi.encode(id, fee), deadline, sig);
         _accept(id, provider_);
+        if (fee != 0) {
+            relays[id].acceptRelayer = msg.sender;
+            relays[id].acceptFee = fee;
+        }
     }
 
     /// The requester publishes the input envelope that includes the provider as a recipient
@@ -370,11 +394,17 @@ contract ComputeMarket is SystemContract {
         bytes calldata output,
         uint64 tokensIn,
         uint64 tokensOut,
+        uint128 fee,
         uint256 deadline,
         bytes calldata sig
     ) external {
-        _verify("deliver", provider_, abi.encode(id, output, tokensIn, tokensOut), deadline, sig);
+        if (fee > MAX_RELAY_FEE) revert FeeTooHigh();
+        _verify("deliver", provider_, abi.encode(id, output, tokensIn, tokensOut, fee), deadline, sig);
         _deliver(id, provider_, output, tokensIn, tokensOut);
+        if (fee != 0) {
+            relays[id].deliverRelayer = msg.sender;
+            relays[id].deliverFee = fee;
+        }
     }
 
     /// Pays a delivered job: when the requester approves it, or by anyone once the dispute window
@@ -393,7 +423,20 @@ contract ComputeMarket is SystemContract {
         uint256 cost = _cost(j.tokensIn, j.priceIn) + _cost(j.tokensOut, j.priceOut);
         uint256 fee = relayer == j.requester ? 0 : j.relayFee;
         uint256 back = j.escrow - cost - fee;
-        (uint256 paid, uint256 toBond) = _earn(j.provider, cost);
+        // Relayers of the provider's signed acceptance and receipt first, out of the cost.
+        uint256 earned = cost;
+        Relay storage r = relays[id];
+        if (r.acceptFee != 0) {
+            uint256 f = r.acceptFee < earned ? r.acceptFee : earned;
+            balanceOf[r.acceptRelayer] += f;
+            earned -= f;
+        }
+        if (r.deliverFee != 0) {
+            uint256 f = r.deliverFee < earned ? r.deliverFee : earned;
+            balanceOf[r.deliverRelayer] += f;
+            earned -= f;
+        }
+        (uint256 paid, uint256 toBond) = _earn(j.provider, earned);
         providers[j.provider].jobsDone++;
         if (fee != 0) balanceOf[relayer] += fee;
         if (back != 0) balanceOf[j.requester] += back;
@@ -509,6 +552,11 @@ contract ComputeMarket is SystemContract {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    function _modelExists(uint64 model) internal view returns (bool) {
+        (bool ok, bytes memory r) = Sys.MODELS.staticcall(abi.encodeWithSignature("exists(uint64)", model));
+        return ok && r.length >= 32 && abi.decode(r, (bool));
+    }
 
     function _epoch() internal view returns (uint64) {
         (bool ok, bytes memory r) = Sys.CONSENSUS.staticcall(abi.encodeWithSignature("currentEpoch()"));

@@ -36,7 +36,16 @@ fn disputes_reach_a_panel_at_the_next_epoch() {
         window: 600,
         relayFee: 0,
     };
-    produce(&chain, vec![call_tx(&requester, 0, COMPUTE, bolt(2), post.abi_encode())]);
+    let model = IModelRegistry::registerCall {
+        name: "m".into(),
+        weights: Bytes::from_static(b"w"),
+        tokenizer: Bytes::new(),
+        runtime: "r".into(),
+        parameters: 1,
+        vramMiB: 1,
+    };
+    produce(&chain, vec![call_tx(&requester, 0, MODELS, U256::ZERO, model.abi_encode())]);
+    produce(&chain, vec![call_tx(&requester, 1, COMPUTE, bolt(2), post.abi_encode())]);
     let id = U256::ZERO;
     let accept = IComputeMarket::acceptCall { id };
     let deliver = IComputeMarket::deliverCall {
@@ -48,7 +57,7 @@ fn disputes_reach_a_panel_at_the_next_epoch() {
     produce(&chain, vec![call_tx(&provider, 1, COMPUTE, U256::ZERO, accept.abi_encode())]);
     produce(&chain, vec![call_tx(&provider, 2, COMPUTE, U256::ZERO, deliver.abi_encode())]);
     let dispute = IComputeMarket::disputeCall { id, reason: Bytes::new() };
-    produce(&chain, vec![call_tx(&requester, 1, COMPUTE, bolt(1), dispute.abi_encode())]);
+    produce(&chain, vec![call_tx(&requester, 2, COMPUTE, bolt(1), dispute.abi_encode())]);
     assert_eq!(view(&chain, COMPUTE, IComputeMarket::pendingDisputesCall {}), vec![id]);
 
     // Up to the first block of the next epoch.

@@ -245,6 +245,19 @@ pub fn send_tx(
     send_kind(rpc_url, signer, TxKind::Call(to), value, data)
 }
 
+/// Signs and sends a call (checked with `eth_estimateGas` first) without waiting for it to be
+/// included; returns its hash.
+pub fn send_tx_nowait(
+    rpc_url: &str,
+    signer: &PrivateKeySigner,
+    to: Address,
+    value: U256,
+    data: Bytes,
+) -> Result<B256> {
+    let raw = sign_call(rpc_url, signer, TxKind::Call(to), value, data)?;
+    Ok(serde_json::from_value(rpc(rpc_url, "eth_sendRawTransaction", json!([raw]))?)?)
+}
+
 /// Deploys `initcode`; returns the new contract's address.
 pub fn deploy(rpc_url: &str, signer: &PrivateKeySigner, initcode: Bytes) -> Result<Address> {
     let hash = send_kind(rpc_url, signer, TxKind::Create, U256::ZERO, initcode)?;
@@ -260,6 +273,39 @@ fn send_kind(
     value: U256,
     data: Bytes,
 ) -> Result<B256> {
+    let raw = sign_call(rpc_url, signer, to, value, data)?;
+    let hash: B256 = serde_json::from_value(rpc(rpc_url, "eth_sendRawTransaction", json!([raw]))?)?;
+    println!("sent {hash}; waiting for inclusion…");
+    wait_receipt(rpc_url, hash)
+}
+
+/// Waits (up to 6 minutes) for a transaction to be included; fails if it reverted.
+pub fn wait_receipt(rpc_url: &str, hash: B256) -> Result<B256> {
+    for _ in 0..180 {
+        let r = rpc(rpc_url, "eth_getTransactionReceipt", json!([hash]))?;
+        if !r.is_null() {
+            let ok = r["status"].as_str() == Some("0x1");
+            let block = r["blockNumber"].as_str().unwrap_or("?");
+            if !ok {
+                bail!("transaction {hash} reverted in block {block}");
+            }
+            println!("included in block {block}");
+            return Ok(hash);
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    bail!("transaction {hash} not included after 6 minutes (still pending)")
+}
+
+/// A signed EIP-1559 transaction (gas from `eth_estimateGas`, so a call that would revert is
+/// refused here), hex-encoded.
+fn sign_call(
+    rpc_url: &str,
+    signer: &PrivateKeySigner,
+    to: TxKind,
+    value: U256,
+    data: Bytes,
+) -> Result<String> {
     let from = signer.address();
     let chain_id = quantity(&rpc(rpc_url, "eth_chainId", json!([]))?)?.to::<u64>();
     let nonce =
@@ -286,23 +332,7 @@ fn send_kind(
     };
     let sig = signer.sign_transaction_sync(&mut tx)?;
     let env: TxEnvelope = tx.into_signed(sig).into();
-    let raw = hex::encode_prefixed(env.encoded_2718());
-    let hash: B256 = serde_json::from_value(rpc(rpc_url, "eth_sendRawTransaction", json!([raw]))?)?;
-    println!("sent {hash}; waiting for inclusion…");
-    for _ in 0..180 {
-        let r = rpc(rpc_url, "eth_getTransactionReceipt", json!([hash]))?;
-        if !r.is_null() {
-            let ok = r["status"].as_str() == Some("0x1");
-            let block = r["blockNumber"].as_str().unwrap_or("?");
-            if !ok {
-                bail!("transaction {hash} reverted in block {block}");
-            }
-            println!("included in block {block}");
-            return Ok(hash);
-        }
-        std::thread::sleep(Duration::from_secs(2));
-    }
-    bail!("transaction {hash} not included after 6 minutes (still pending)")
+    Ok(hex::encode_prefixed(env.encoded_2718()))
 }
 
 /// The chain's current epoch (ConsensusRegistry).

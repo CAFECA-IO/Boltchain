@@ -91,6 +91,7 @@ pub async fn run(args: FollowArgs) -> Result<()> {
         ))),
         client_version: crate::CLIENT_VERSION.to_string(),
         host: None,
+        relay: None,
         forwarder: Some(Arc::new(Forward {
             net: net.clone(),
             producer,

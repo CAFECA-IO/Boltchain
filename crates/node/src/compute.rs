@@ -10,10 +10,20 @@
 //!   OpenAI-compatible chat completion request without the model name.
 //! - Output (provider → requester): the backend's JSON response (`choices`, `usage`, …).
 //!
-//! The provider serves jobs addressed to it with any OpenAI-compatible HTTP backend
-//! (llama.cpp's `llama-server`, Ollama, vLLM): `--backend http://127.0.0.1:8080` and
-//! `--model <id>=<backend model name>` for each model id it runs. Token counts come from the
-//! backend's `usage` and are capped at the job's maxima.
+//! The provider serves jobs with any OpenAI-compatible HTTP backend (llama.cpp's
+//! `llama-server`, Ollama, vLLM): `--backend http://127.0.0.1:8080` and
+//! `--model <id>=<backend model name>` for each `ModelRegistry` id it runs. Token counts come
+//! from the backend's `usage` and are capped at the job's maxima. It asks the backend for the
+//! top-k log-probabilities of every output token and delivers them with the answer, so a
+//! verifier panel can compare its own re-run token by token (`boltchain judge`).
+//!
+//! Jobs are either addressed to one provider (the input is encrypted for it at once) or open to
+//! any provider (`job post` without `--provider`): a provider running with `--open` takes it,
+//! then the requester's `job watch` (or `post --wait`) adds the provider as a recipient of the
+//! input (`shareInput`, no re-upload).
+//!
+//! A provider without BOLT signs its actions and hands them to a relay (`--relay <URL>`, a node
+//! started with `--relay-wallet`), which pays the gas and is paid a fee from the job.
 
 use crate::{
     swarm::vault_key,
@@ -21,10 +31,13 @@ use crate::{
 };
 use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolValue};
 use anyhow::{Context, Result, bail};
 use bolt_ipld::Cid;
-use bolt_system::{abi::IComputeMarket, addresses::COMPUTE};
+use bolt_system::{
+    abi::{IComputeMarket, IModelRegistry},
+    addresses::{COMPUTE, MODELS},
+};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -78,6 +91,8 @@ pub enum ProviderCmd {
         /// JSON-RPC endpoint.
         #[arg(long, default_value = RPC)]
         rpc: String,
+        #[command(flatten)]
+        relay: RelayArgs,
     },
     /// Serve jobs addressed to this account with an OpenAI-compatible backend until stopped.
     Run {
@@ -96,6 +111,22 @@ pub enum ProviderCmd {
         /// Seconds between scans for new jobs.
         #[arg(long, default_value_t = 5)]
         interval: u64,
+        /// Also take jobs open to any provider (for a model in `--model`) paying at least
+        /// `--min-price-in` / `--min-price-out`.
+        #[arg(long)]
+        open: bool,
+        /// Smallest price, in BOLT per 1,000 input tokens, of an open job to take.
+        #[arg(long, default_value = "0")]
+        min_price_in: String,
+        /// Smallest price, in BOLT per 1,000 output tokens, of an open job to take.
+        #[arg(long, default_value = "0")]
+        min_price_out: String,
+        /// Top log-probabilities requested per output token and delivered with the answer
+        /// (lets verifiers compare token by token; 0 turns it off).
+        #[arg(long, default_value_t = 5)]
+        top_logprobs: u32,
+        #[command(flatten)]
+        relay: RelayArgs,
     },
     /// Show a provider's registration, bond, jobs and balance.
     Status {
@@ -113,7 +144,32 @@ pub enum ProviderCmd {
         /// JSON-RPC endpoint.
         #[arg(long, default_value = RPC)]
         rpc: String,
+        #[command(flatten)]
+        relay: RelayArgs,
     },
+}
+
+/// Sending a provider's actions through a relay instead of paying gas.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct RelayArgs {
+    /// JSON-RPC URL of a relaying node (`--relay-wallet`): your actions are signed here and
+    /// submitted by it, so this account needs no BOLT.
+    #[arg(long, value_name = "URL")]
+    pub relay: Option<String>,
+    /// Fee, in BOLT, offered to the relay per action (paid from the job when it settles; a
+    /// registration fee is repaid from the first earnings).
+    #[arg(long, default_value = "0.001")]
+    pub relay_fee: String,
+}
+
+impl RelayArgs {
+    /// `(relay URL, fee in wei)` when a relay is set.
+    pub fn resolve(&self) -> Result<Option<(String, U256)>> {
+        Ok(match &self.relay {
+            Some(u) => Some((u.clone(), parse_bolt(&self.relay_fee)?)),
+            None => None,
+        })
+    }
 }
 
 /// Requester commands.
@@ -124,10 +180,10 @@ pub enum JobCmd {
         /// Account key file (pays).
         #[arg(long)]
         wallet: PathBuf,
-        /// Provider address (must be registered).
+        /// Provider address (must be registered). Without it the job is open to any provider.
         #[arg(long)]
-        provider: Address,
-        /// Model id (as the provider maps it).
+        provider: Option<Address>,
+        /// Model id in `ModelRegistry` (`boltchain model list`).
         #[arg(long)]
         model: u64,
         /// Prompt text (a single user message).
@@ -154,6 +210,25 @@ pub enum JobCmd {
         /// Minutes you have to dispute a delivery (10 to 10,080).
         #[arg(long, default_value_t = 30)]
         window: u64,
+        /// Keep running: share the input with whoever takes an open job, then print the result.
+        #[arg(long)]
+        wait: bool,
+        /// Require the answer's top log-probabilities per token (a delivery without them is at
+        /// fault in a dispute).
+        #[arg(long)]
+        logprobs: bool,
+        /// JSON-RPC endpoint of your node (started with `--rpc-storage`).
+        #[arg(long, default_value = RPC)]
+        rpc: String,
+    },
+    /// Follow a job you posted: share its input with the provider that takes it (open jobs),
+    /// then print the result when it is delivered.
+    Watch {
+        /// Account key file (the requester).
+        #[arg(long)]
+        wallet: PathBuf,
+        /// Job id.
+        id: u64,
         /// JSON-RPC endpoint of your node (started with `--rpc-storage`).
         #[arg(long, default_value = RPC)]
         rpc: String,
@@ -364,6 +439,49 @@ fn first_indexed(url: &str, hash: B256, sig: &str) -> Result<U256> {
 // ---------------------------------------------------------------------------------------------
 // Provider.
 
+/// Signs a `ComputeMarket` action (`register`, `accept`, `deliver`) for submission by others.
+pub fn sign_action(
+    url: &str,
+    s: &PrivateKeySigner,
+    action: &str,
+    data: Vec<u8>,
+    deadline: u64,
+) -> Result<Bytes> {
+    let digest = call(
+        url,
+        IComputeMarket::actionDigestCall {
+            action: B256::right_padding_from(action.as_bytes()),
+            signer: s.address(),
+            data: data.into(),
+            deadline: U256::from(deadline),
+        },
+    )?;
+    let sig = alloy_signer::SignerSync::sign_hash_sync(s, &digest)?;
+    Ok(Bytes::from(sig.as_bytes().to_vec()))
+}
+
+/// Sends a call to ComputeMarket: through the relay `(url, _)` when given, else paying gas.
+fn submit(
+    url: &str,
+    s: &PrivateKeySigner,
+    relay: Option<&(String, U256)>,
+    data: Vec<u8>,
+) -> Result<B256> {
+    match relay {
+        Some((r, _)) => crate::relay::through_relay(r, COMPUTE, data),
+        None => send_tx(url, s, COMPUTE, U256::ZERO, data.into()),
+    }
+}
+
+/// Which open jobs a provider takes.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OpenPolicy {
+    /// Smallest wei per 1,000 input tokens.
+    pub min_price_in: U256,
+    /// Smallest wei per 1,000 output tokens.
+    pub min_price_out: U256,
+}
+
 /// A provider's serving loop state.
 pub struct Provider {
     signer: PrivateKeySigner,
@@ -372,6 +490,12 @@ pub struct Provider {
     rpc: String,
     backend: String,
     models: HashMap<u64, String>,
+    /// Take open jobs.
+    open: Option<OpenPolicy>,
+    /// Relay URL and fee per action.
+    relay: Option<(String, U256)>,
+    /// Top log-probabilities asked of the backend per output token (0: none).
+    top_logprobs: u32,
     /// Jobs below this id are finished or not ours.
     cursor: u64,
     /// Jobs that failed permanently (not retried).
@@ -399,7 +523,7 @@ impl std::fmt::Debug for Provider {
 }
 
 impl Provider {
-    /// A provider serving jobs for `signer` with `backend`.
+    /// A provider serving jobs addressed to `signer` with `backend`, paying its own gas.
     pub fn new(
         signer: PrivateKeySigner,
         rpc: &str,
@@ -414,13 +538,38 @@ impl Provider {
             rpc: rpc.to_owned(),
             backend: backend.trim_end_matches('/').to_owned(),
             models,
+            open: None,
+            relay: None,
+            top_logprobs: 5,
             cursor: 0,
             failed: HashSet::new(),
         }
     }
 
-    /// One scan: accept the open jobs addressed to this provider (for a model it runs), run the
-    /// accepted ones and deliver. Returns the jobs delivered.
+    /// Also takes open jobs under `policy`.
+    pub fn with_open(mut self, policy: OpenPolicy) -> Self {
+        self.open = Some(policy);
+        self
+    }
+
+    /// Sends actions through the relay at `url`, offering `fee` wei each.
+    pub fn with_relay(mut self, url: &str, fee: U256) -> Self {
+        self.relay = Some((url.to_owned(), fee));
+        self
+    }
+
+    /// Top log-probabilities asked per output token (0: none).
+    pub fn with_top_logprobs(mut self, k: u32) -> Self {
+        self.top_logprobs = k;
+        self
+    }
+
+    fn relay_fee(&self) -> u128 {
+        self.relay.as_ref().map(|(_, f)| f.to::<u128>()).unwrap_or(0)
+    }
+
+    /// One scan: take the jobs addressed to this provider (and open ones it wants), run the
+    /// accepted ones whose input it can read, and deliver. Returns the jobs delivered.
     pub fn round(&mut self) -> Result<Vec<u64>> {
         let me = self.signer.address();
         let count = call(&self.rpc, IComputeMarket::jobCountCall {})?.to::<u64>();
@@ -436,15 +585,20 @@ impl Provider {
                 continue;
             }
             advancing = false;
-            if !mine || !live || self.failed.contains(&id) {
+            let open_job = j.provider == Address::ZERO && j.state == state::OPEN;
+            if !live || self.failed.contains(&id) || !(mine || (open_job && self.open.is_some())) {
                 continue;
             }
             let Some(model) = self.models.get(&j.model).cloned() else {
                 tracing::debug!(job = id, model = j.model, "model not served here");
                 continue;
             };
+            if open_job && !self.wants(&j)? {
+                continue;
+            }
             match self.serve(id, &j, &model) {
-                Ok(()) => delivered.push(id),
+                Ok(true) => delivered.push(id),
+                Ok(false) => {} // waiting for the requester to share the input
                 Err(e) => {
                     eprintln!("job {id}: {e:#}");
                     self.failed.insert(id);
@@ -454,41 +608,166 @@ impl Provider {
         Ok(delivered)
     }
 
-    fn serve(&self, id: u64, j: &IComputeMarket::Job, model: &str) -> Result<()> {
+    /// Whether to take open job `j`: price and this provider's job limit.
+    fn wants(&self, j: &IComputeMarket::Job) -> Result<bool> {
+        let p = self.open.unwrap_or_default();
+        if U256::from(j.priceIn) < p.min_price_in || U256::from(j.priceOut) < p.min_price_out {
+            return Ok(false);
+        }
+        let limit = call(&self.rpc, IComputeMarket::jobLimitCall { p: self.signer.address() })?;
+        Ok(U256::from(j.escrow) <= limit)
+    }
+
+    fn accept(&self, id: u64) -> Result<()> {
+        let data = match &self.relay {
+            None => IComputeMarket::acceptCall { id: U256::from(id) }.abi_encode(),
+            Some(_) => {
+                let fee = self.relay_fee();
+                let deadline = chain_time(&self.rpc)? + 600;
+                let sig = sign_action(
+                    &self.rpc,
+                    &self.signer,
+                    "accept",
+                    (U256::from(id), fee).abi_encode_params(),
+                    deadline,
+                )?;
+                IComputeMarket::acceptForCall {
+                    id: U256::from(id),
+                    provider_: self.signer.address(),
+                    fee,
+                    deadline: U256::from(deadline),
+                    sig,
+                }
+                .abi_encode()
+            }
+        };
+        submit(&self.rpc, &self.signer, self.relay.as_ref(), data)?;
+        Ok(())
+    }
+
+    /// Takes (if needed), runs and delivers job `id`. `Ok(false)`: its input is not readable yet
+    /// (an open job whose requester has not shared it).
+    fn serve(&self, id: u64, j: &IComputeMarket::Job, model: &str) -> Result<bool> {
         if j.state == state::OPEN {
-            let data = IComputeMarket::acceptCall { id: U256::from(id) }.abi_encode();
-            send_tx(&self.rpc, &self.signer, COMPUTE, U256::ZERO, data.into())?;
+            self.accept(id)?;
             println!("job {id}: accepted");
         }
-        let input = fetch_and_open(&self.rpc, &j.input, &self.sk).context("reading the input")?;
+        let j = call(&self.rpc, IComputeMarket::jobCall { id: U256::from(id) })?;
+        let input = match fetch_and_open(&self.rpc, &j.input, &self.sk) {
+            Ok(i) => i,
+            Err(e) => {
+                // Open jobs: the requester adds this provider as a recipient after acceptance.
+                tracing::debug!(job = id, "input not readable yet: {e:#}");
+                return Ok(false);
+            }
+        };
         let mut req: Value = serde_json::from_slice(&input).context("input is not JSON")?;
         let obj = req.as_object_mut().context("input is not a JSON object")?;
         obj.insert("model".into(), json!(model));
         obj.insert("stream".into(), json!(false));
         let cap = obj.get("max_tokens").and_then(Value::as_u64).unwrap_or(j.maxOut).min(j.maxOut);
         obj.insert("max_tokens".into(), json!(cap));
-        let resp = http_post_json(
-            &format!("{}/v1/chat/completions", self.backend),
-            &req,
-            Duration::from_secs(900),
-        )?;
+        if self.top_logprobs > 0 && !obj.contains_key("logprobs") {
+            obj.insert("logprobs".into(), json!(true));
+            obj.insert("top_logprobs".into(), json!(self.top_logprobs));
+        }
+        let url = format!("{}/v1/chat/completions", self.backend);
+        let resp = match http_post_json(&url, &req, Duration::from_secs(900)) {
+            Ok(r) => r,
+            Err(e) if self.top_logprobs > 0 && obj_wants_logprobs(&req) => {
+                // A backend without log-probabilities: answer without them.
+                tracing::warn!(job = id, "backend refused logprobs ({e:#}); retrying without");
+                let o = req.as_object_mut().expect("object");
+                o.remove("logprobs");
+                o.remove("top_logprobs");
+                http_post_json(&url, &req, Duration::from_secs(900))?
+            }
+            Err(e) => return Err(e),
+        };
         let tin = resp["usage"]["prompt_tokens"].as_u64().unwrap_or(0).min(j.maxIn);
         let tout = resp["usage"]["completion_tokens"].as_u64().unwrap_or(0).min(j.maxOut);
         let requester = encryption_key(&self.rpc, j.requester)
             .context("the requester has no encryption key (`job post` registers it)")?;
         let out = serde_json::to_vec(&resp)?;
         let env = seal_and_host(&self.rpc, &out, "output.json", &[requester, self.pk.clone()])?;
-        let data = IComputeMarket::deliverCall {
-            id: U256::from(id),
-            output: Bytes::from(env.to_bytes()),
-            tokensIn: tin,
-            tokensOut: tout,
-        }
-        .abi_encode();
-        send_tx(&self.rpc, &self.signer, COMPUTE, U256::ZERO, data.into())?;
+        let output = Bytes::from(env.to_bytes());
+        let data = match &self.relay {
+            None => IComputeMarket::deliverCall {
+                id: U256::from(id),
+                output,
+                tokensIn: tin,
+                tokensOut: tout,
+            }
+            .abi_encode(),
+            Some(_) => {
+                let fee = self.relay_fee();
+                let deadline = chain_time(&self.rpc)? + 600;
+                let sig = sign_action(
+                    &self.rpc,
+                    &self.signer,
+                    "deliver",
+                    (U256::from(id), output.clone(), tin, tout, fee).abi_encode_params(),
+                    deadline,
+                )?;
+                IComputeMarket::deliverForCall {
+                    id: U256::from(id),
+                    provider_: self.signer.address(),
+                    output,
+                    tokensIn: tin,
+                    tokensOut: tout,
+                    fee,
+                    deadline: U256::from(deadline),
+                    sig,
+                }
+                .abi_encode()
+            }
+        };
+        submit(&self.rpc, &self.signer, self.relay.as_ref(), data)?;
         println!("job {id}: delivered ({tin} input, {tout} output tokens)");
-        Ok(())
+        Ok(true)
     }
+}
+
+fn obj_wants_logprobs(req: &Value) -> bool {
+    req["logprobs"].as_bool().unwrap_or(false)
+}
+
+/// Registers `s` as a provider: directly, or through a relay that is repaid from the first
+/// earnings.
+pub fn register_provider(
+    url: &str,
+    s: &PrivateKeySigner,
+    peer: &[u8],
+    relay: Option<&(String, U256)>,
+) -> Result<()> {
+    let (_, pk) = vault_key(s);
+    let key = B256::from(pk.to_bytes());
+    let data = match relay {
+        None => IComputeMarket::registerCall { encKey: key, peerId: Bytes::copy_from_slice(peer) }
+            .abi_encode(),
+        Some((_, fee)) => {
+            let deadline = chain_time(url)? + 600;
+            let peer = Bytes::copy_from_slice(peer);
+            let sig = sign_action(
+                url,
+                s,
+                "register",
+                (key, peer.clone(), *fee).abi_encode_params(),
+                deadline,
+            )?;
+            IComputeMarket::registerForCall {
+                provider_: s.address(),
+                encKey: key,
+                peerId: peer,
+                fee: *fee,
+                deadline: U256::from(deadline),
+                sig,
+            }
+            .abi_encode()
+        }
+    };
+    submit(url, s, relay, data)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -599,6 +878,135 @@ pub struct JudgeArgs {
     /// Allowed excess of the claimed token counts over the recount (fraction).
     #[arg(long, default_value_t = 0.1)]
     pub token_slack: f64,
+    /// Answers with log-probabilities: smallest mean overlap (Jaccard) of the top-k tokens per
+    /// position between the delivery and the re-run.
+    #[arg(long, default_value_t = 0.5)]
+    pub min_topk_overlap: f64,
+    /// Answers with log-probabilities: largest mean difference (nats) of the log-probabilities
+    /// both runs give the same tokens.
+    #[arg(long, default_value_t = 1.0)]
+    pub logprob_tolerance: f64,
+    /// Answers with log-probabilities: where the two runs first pick different tokens, the
+    /// delivered token must be within this many nats of the re-run's best one (a near tie).
+    #[arg(long, default_value_t = 2.0)]
+    pub tie_gap: f64,
+}
+
+/// One output token with its log-probability and the top alternatives (OpenAI `logprobs`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TokenLogprobs {
+    /// The token chosen.
+    pub token: String,
+    /// Its log-probability.
+    pub logprob: f64,
+    /// Top alternatives (token, log-probability), best first.
+    pub top: Vec<(String, f64)>,
+}
+
+/// The per-token log-probabilities of a chat completion (`choices[0].logprobs.content`).
+pub fn token_logprobs(resp: &Value) -> Option<Vec<TokenLogprobs>> {
+    let content = resp["choices"][0]["logprobs"]["content"].as_array()?;
+    content
+        .iter()
+        .map(|t| {
+            Some(TokenLogprobs {
+                token: t["token"].as_str()?.to_owned(),
+                logprob: t["logprob"].as_f64()?,
+                top: t["top_logprobs"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| {
+                                Some((x["token"].as_str()?.to_owned(), x["logprob"].as_f64()?))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+/// Limits for comparing a delivery's log-probabilities with a re-run's.
+#[derive(Debug, Clone, Copy)]
+pub struct LogprobLimits {
+    /// Smallest mean top-k overlap.
+    pub min_overlap: f64,
+    /// Largest mean log-probability difference on shared tokens.
+    pub tolerance: f64,
+    /// Largest gap below the re-run's best token where the two runs part.
+    pub tie_gap: f64,
+}
+
+/// Compares the delivered tokens with a greedy re-run of the same model, position by position
+/// until the two runs pick different tokens (after that the contexts differ). A different
+/// model, a smaller quantisation or invented numbers show as top-k sets that do not overlap,
+/// log-probabilities far apart, or a parting token the re-run ranks low. Returns the notes, or
+/// the reason the delivery is at fault.
+pub fn compare_logprobs(
+    delivered: &[TokenLogprobs],
+    rerun: &[TokenLogprobs],
+    limits: LogprobLimits,
+) -> std::result::Result<String, String> {
+    let set = |t: &TokenLogprobs| -> HashSet<String> {
+        t.top.iter().map(|(x, _)| x.clone()).chain([t.token.clone()]).collect()
+    };
+    let lp = |t: &TokenLogprobs, tok: &str| -> Option<f64> {
+        if t.token == tok {
+            return Some(t.logprob);
+        }
+        t.top.iter().find(|(x, _)| x == tok).map(|(_, l)| *l)
+    };
+    let (mut overlap, mut diff, mut shared, mut n) = (0.0, 0.0, 0usize, 0usize);
+    for (p, v) in delivered.iter().zip(rerun) {
+        let (sp, sv) = (set(p), set(v));
+        let union = sp.union(&sv).count().max(1);
+        overlap += sp.intersection(&sv).count() as f64 / union as f64;
+        n += 1;
+        for tok in sp.intersection(&sv) {
+            if let (Some(a), Some(b)) = (lp(p, tok), lp(v, tok)) {
+                diff += (a - b).abs();
+                shared += 1;
+            }
+        }
+        if p.token != v.token {
+            let best = v.top.first().map(|(_, l)| *l).unwrap_or(v.logprob).max(v.logprob);
+            match lp(v, &p.token) {
+                Some(l) if best - l <= limits.tie_gap => break,
+                Some(l) => {
+                    return Err(format!(
+                        "at token {} the delivery chose {:?}, which the model ranks {:.2} nats below its best",
+                        n - 1,
+                        p.token,
+                        best - l
+                    ));
+                }
+                None => {
+                    return Err(format!(
+                        "at token {} the delivery chose {:?}, outside the model's top {}",
+                        n - 1,
+                        p.token,
+                        sv.len()
+                    ));
+                }
+            }
+        }
+    }
+    if n == 0 {
+        return Err("no tokens to compare".into());
+    }
+    let overlap = overlap / n as f64;
+    let diff = if shared == 0 { 0.0 } else { diff / shared as f64 };
+    let note = format!(
+        "{n} tokens compared: top-k overlap {overlap:.2}, log-probability difference {diff:.2}"
+    );
+    if overlap < limits.min_overlap {
+        return Err(format!("{note} (overlap below {:.2})", limits.min_overlap));
+    }
+    if diff > limits.tolerance {
+        return Err(format!("{note} (difference above {:.2})", limits.tolerance));
+    }
+    Ok(note)
 }
 
 /// The first line of a verdict: `fault`, `ok`, or anything else to abstain; then the reasons.
@@ -667,12 +1075,65 @@ pub fn judge(args: &JudgeArgs, env: &HashMap<String, String>) -> Result<Verdict>
         return fault(notes, "the delivered output has no answer".into());
     };
     let mut req: Value = serde_json::from_slice(&input).context("input is not JSON")?;
+    let required = obj_wants_logprobs(&req);
+    let delivered_lp = token_logprobs(&delivered);
+    if required && delivered_lp.is_none() {
+        return fault(
+            notes,
+            "the requester asked for log-probabilities and the delivery has none".into(),
+        );
+    }
     let obj = req.as_object_mut().context("input is not a JSON object")?;
     obj.insert("model".into(), json!(model));
     obj.insert("stream".into(), json!(false));
-    obj.entry("temperature").or_insert(json!(0));
+    obj.insert("temperature".into(), json!(0));
+    if let Some(d) = &delivered_lp {
+        // The delivered tokens must spell the delivered answer, and number what was charged.
+        let spelled: String = d.iter().map(|t| t.token.as_str()).collect();
+        if spelled.trim() != answer.trim() {
+            return fault(
+                notes,
+                "the delivered log-probabilities do not spell the delivered answer".into(),
+            );
+        }
+        let claimed_out: u64 = get("BOLT_TOKENS_OUT")?.parse()?;
+        if claimed_out > d.len() as u64 {
+            return fault(
+                notes,
+                format!("claimed {claimed_out} output tokens, the delivery lists {}", d.len()),
+            );
+        }
+        let k = d.iter().map(|t| t.top.len()).max().unwrap_or(5).max(1);
+        obj.insert("logprobs".into(), json!(true));
+        obj.insert("top_logprobs".into(), json!(k));
+        obj.insert("max_tokens".into(), json!(d.len()));
+    }
     let rerun =
         http_post_json(&format!("{backend}/v1/chat/completions"), &req, Duration::from_secs(900))?;
+    if let Some(d) = &delivered_lp {
+        let claimed_in: u64 = get("BOLT_TOKENS_IN")?.parse()?;
+        let slack = |n: u64| (n as f64 * (1.0 + args.token_slack)).ceil() as u64 + 8;
+        if let Some(p) = rerun["usage"]["prompt_tokens"].as_u64()
+            && claimed_in > slack(p)
+        {
+            return fault(notes, format!("claimed {claimed_in} input tokens, the prompt has {p}"));
+        }
+        let Some(v) = token_logprobs(&rerun) else {
+            return abstain("the verifier's backend returns no log-probabilities".into());
+        };
+        let limits = LogprobLimits {
+            min_overlap: args.min_topk_overlap,
+            tolerance: args.logprob_tolerance,
+            tie_gap: args.tie_gap,
+        };
+        return match compare_logprobs(d, &v, limits) {
+            Ok(note) => {
+                notes.push(note);
+                Ok(("ok".to_string(), notes))
+            }
+            Err(why) => fault(notes, why),
+        };
+    }
     let again = rerun["choices"][0]["message"]["content"].as_str().unwrap_or_default().to_owned();
     let claimed_in: u64 = get("BOLT_TOKENS_IN")?.parse()?;
     let claimed_out: u64 = get("BOLT_TOKENS_OUT")?.parse()?;
@@ -706,27 +1167,46 @@ pub fn judge(args: &JudgeArgs, env: &HashMap<String, String>) -> Result<Verdict>
 /// Runs a provider command.
 pub fn run_provider(cmd: ProviderCmd) -> Result<()> {
     match cmd {
-        ProviderCmd::Register { wallet, node_key, rpc: url } => {
+        ProviderCmd::Register { wallet, node_key, rpc: url, relay } => {
             let s = load_wallet(&wallet)?;
-            let (_, pk) = vault_key(&s);
             let peer = bolt_net::load_or_create_key(&node_key)?.public().to_peer_id();
-            let data = IComputeMarket::registerCall {
-                encKey: B256::from(pk.to_bytes()),
-                peerId: Bytes::copy_from_slice(&peer.to_bytes()),
-            }
-            .abi_encode();
-            send_tx(&url, &s, COMPUTE, U256::ZERO, data.into())?;
+            register_provider(&url, &s, &peer.to_bytes(), relay.resolve()?.as_ref())?;
             println!("{} registered as a compute provider (peer {peer})", s.address());
         }
-        ProviderCmd::Run { wallet, backend, models, rpc: url, interval } => {
+        ProviderCmd::Run {
+            wallet,
+            backend,
+            models,
+            rpc: url,
+            interval,
+            open,
+            min_price_in,
+            min_price_out,
+            top_logprobs,
+            relay,
+        } => {
             let s = load_wallet(&wallet)?;
             let models = parse_models(&models)?;
             let reg = call(&url, IComputeMarket::providerCall { p: s.address() })?;
             if !reg.registered {
                 bail!("{} is not registered: run `boltchain provider register` first", s.address());
             }
+            for id in models.keys() {
+                if !call(&url, IModelRegistry::existsCall { id: *id })? {
+                    bail!("model {id} is not in ModelRegistry (`boltchain model list`)");
+                }
+            }
             println!("serving jobs for {} with {backend} (models {models:?})", s.address());
-            let mut p = Provider::new(s, &url, &backend, models);
+            let mut p = Provider::new(s, &url, &backend, models).with_top_logprobs(top_logprobs);
+            if open {
+                p = p.with_open(OpenPolicy {
+                    min_price_in: parse_bolt(&min_price_in)?,
+                    min_price_out: parse_bolt(&min_price_out)?,
+                });
+            }
+            if let Some((r, fee)) = relay.resolve()? {
+                p = p.with_relay(&r, fee);
+            }
             loop {
                 if let Err(e) = p.round() {
                     eprintln!("scan: {e:#}");
@@ -753,8 +1233,9 @@ pub fn run_provider(cmd: ProviderCmd) -> Result<()> {
                 }
             );
         }
-        ProviderCmd::Collect { wallet, rpc: url } => {
+        ProviderCmd::Collect { wallet, rpc: url, relay } => {
             let s = load_wallet(&wallet)?;
+            let relay = relay.resolve()?;
             let count = call(&url, IComputeMarket::jobCountCall {})?.to::<u64>();
             let now = chain_time(&url)?;
             for id in 0..count {
@@ -764,13 +1245,26 @@ pub fn run_provider(cmd: ProviderCmd) -> Result<()> {
                     && now >= j.deliveredAt + j.window
                 {
                     let data = IComputeMarket::settleCall { id: U256::from(id) }.abi_encode();
-                    match send_tx(&url, &s, COMPUTE, U256::ZERO, data.into()) {
+                    match submit(&url, &s, relay.as_ref(), data) {
                         Ok(_) => println!("job {id}: settled"),
                         Err(e) => println!("job {id}: {e:#}"),
                     }
                 }
             }
-            withdraw(&url, &s)?;
+            match &relay {
+                // The relay pushes the balance to the provider (no gas needed here).
+                Some(_) => {
+                    let b = call(&url, IComputeMarket::balanceOfCall { account: s.address() })?;
+                    if b.is_zero() {
+                        println!("nothing to withdraw");
+                    } else {
+                        let data = IComputeMarket::payoutCall { account: s.address() }.abi_encode();
+                        submit(&url, &s, relay.as_ref(), data)?;
+                        println!("paid out {} BOLT", format_bolt(b));
+                    }
+                }
+                None => withdraw(&url, &s)?,
+            }
         }
     }
     Ok(())
@@ -811,11 +1305,15 @@ pub struct NewJob {
     pub window: u64,
 }
 
-/// Encrypts the request for the provider, hands it to the node, registers the requester's own
-/// encryption key if needed, and posts the job. Returns its id.
+/// Encrypts the request for the provider (only for the requester when the job is open: the
+/// provider that takes it is added later, see [`share_input`]), hands it to the node, registers
+/// the requester's own encryption key if needed, and posts the job. Returns its id.
 pub fn post_job(url: &str, s: &PrivateKeySigner, job: &NewJob) -> Result<u64> {
     let (_, mine) = vault_key(s);
-    let provider_key = encryption_key(url, job.provider)?;
+    let mut recipients = vec![mine.clone()];
+    if job.provider != Address::ZERO {
+        recipients.push(encryption_key(url, job.provider)?);
+    }
     // The provider encrypts the result for the requester's registered key.
     let have = call(url, IComputeMarket::encryptionKeyCall { account: s.address() })?;
     if have != B256::from(mine.to_bytes()) {
@@ -824,7 +1322,7 @@ pub fn post_job(url: &str, s: &PrivateKeySigner, job: &NewJob) -> Result<u64> {
         send_tx(url, s, COMPUTE, U256::ZERO, data.into())?;
     }
     let body = serde_json::to_vec(&job.request)?;
-    let env = seal_and_host(url, &body, "input.json", &[mine, provider_key])?;
+    let env = seal_and_host(url, &body, "input.json", &recipients)?;
     let now = chain_time(url)?;
     let cost = |t: u64, p: U256| U256::from(t) * p / U256::from(1000);
     let value = cost(job.max_in, job.price_in) + cost(job.max_out, job.price_out);
@@ -846,6 +1344,64 @@ pub fn post_job(url: &str, s: &PrivateKeySigner, job: &NewJob) -> Result<u64> {
     Ok(first_indexed(url, hash, "JobPosted(uint256,address,address,uint64,bytes)")?.to::<u64>())
 }
 
+/// Adds the provider that took open job `id` as a recipient of its input (no re-upload) and
+/// publishes the new envelope (`shareInput`).
+pub fn share_input(url: &str, s: &PrivateKeySigner, id: u64) -> Result<()> {
+    let j = call(url, IComputeMarket::jobCall { id: U256::from(id) })?;
+    if j.requester != s.address() {
+        bail!("job {id} is not yours");
+    }
+    if j.state != state::ACCEPTED {
+        bail!("job {id} is {}, not accepted", state_name(j.state));
+    }
+    let (sk, _) = vault_key(s);
+    let provider = encryption_key(url, j.provider)?;
+    let env = reshare(url, &j.input, &sk, &[provider])?;
+    let data =
+        IComputeMarket::shareInputCall { id: U256::from(id), input: Bytes::from(env.to_bytes()) }
+            .abi_encode();
+    send_tx(url, s, COMPUTE, U256::ZERO, data.into())?;
+    Ok(())
+}
+
+/// Follows job `id` until it is delivered (sharing its input with the provider that takes it
+/// if it was open) and returns the result, or fails when it ends otherwise.
+pub fn watch_job(url: &str, s: &PrivateKeySigner, id: u64, poll: Duration) -> Result<Value> {
+    let (sk, _) = vault_key(s);
+    let mut shared = false;
+    loop {
+        let j = call(url, IComputeMarket::jobCall { id: U256::from(id) })?;
+        match j.state {
+            state::ACCEPTED if !shared => {
+                // Posted open, the input has one recipient (the requester); addressed jobs and
+                // shared ones have two.
+                let readable = bolt_vault::parse_envelope(&fetch_envelope(url, &j.input)?)
+                    .map(|e| e.keys.len() >= 2)
+                    .unwrap_or(false);
+                if !readable {
+                    share_input(url, s, id)?;
+                    println!("job {id}: input shared with provider {}", j.provider);
+                }
+                shared = true;
+            }
+            state::DELIVERED | state::SETTLED | state::DISPUTED => {
+                let out = fetch_and_open(url, &j.output, &sk)?;
+                return Ok(serde_json::from_slice(&out)?);
+            }
+            state::REFUNDED => bail!("job {id} was refunded"),
+            _ => {}
+        }
+        std::thread::sleep(poll);
+    }
+}
+
+fn fetch_envelope(url: &str, env: &[u8]) -> Result<Vec<u8>> {
+    let root = Cid::try_from(env).context("envelope CID")?;
+    let v = rpc(url, "bolt_getBlocks", json!([[root.to_string()], null, root.to_string()]))?;
+    let got: Vec<Bytes> = serde_json::from_value(v)?;
+    Ok(got.into_iter().next().context("envelope missing")?.to_vec())
+}
+
 /// Fetches and decrypts a delivered job's result.
 pub fn job_result(url: &str, s: &PrivateKeySigner, id: u64) -> Result<Value> {
     let j = call(url, IComputeMarket::jobCall { id: U256::from(id) })?;
@@ -855,6 +1411,139 @@ pub fn job_result(url: &str, s: &PrivateKeySigner, id: u64) -> Result<Value> {
     let (sk, _) = vault_key(s);
     let out = fetch_and_open(url, &j.output, &sk)?;
     Ok(serde_json::from_slice(&out)?)
+}
+
+fn print_result(v: &Value) {
+    match v["choices"][0]["message"]["content"].as_str() {
+        Some(text) => println!("{text}"),
+        None => println!("{}", serde_json::to_string_pretty(v).unwrap_or_default()),
+    }
+}
+
+/// Model registry commands (ADR 0011 §7).
+#[derive(Debug, clap::Subcommand)]
+pub enum ModelCmd {
+    /// Register a model (anyone may; entries are permanent). Prints its id.
+    Register {
+        /// Account key file (pays the gas).
+        #[arg(long)]
+        wallet: PathBuf,
+        /// Display name, e.g. "Qwen2.5-7B-Instruct Q4_K_M".
+        #[arg(long)]
+        name: String,
+        /// CID of the weights file (e.g. the GGUF), as stored with `boltchain storage put`.
+        #[arg(long)]
+        weights: String,
+        /// CID of the tokenizer, when it is not inside the weights file.
+        #[arg(long)]
+        tokenizer: Option<String>,
+        /// Runtime and version that should serve it, e.g. "llama.cpp b4500".
+        #[arg(long)]
+        runtime: String,
+        /// Parameter count, e.g. 7.6e9.
+        #[arg(long)]
+        parameters: f64,
+        /// Suggested GPU memory, MiB.
+        #[arg(long)]
+        vram: u32,
+        /// JSON-RPC endpoint.
+        #[arg(long, default_value = RPC)]
+        rpc: String,
+    },
+    /// List registered models and how many providers serve each.
+    List {
+        /// JSON-RPC endpoint.
+        #[arg(long, default_value = RPC)]
+        rpc: String,
+    },
+    /// Declare that this provider serves a model (or stops, with `--stop`).
+    Support {
+        /// Account key file (the provider).
+        #[arg(long)]
+        wallet: PathBuf,
+        /// Model id.
+        id: u64,
+        /// Stop serving it.
+        #[arg(long)]
+        stop: bool,
+        /// JSON-RPC endpoint.
+        #[arg(long, default_value = RPC)]
+        rpc: String,
+    },
+}
+
+fn models_call<C: SolCall>(url: &str, c: C) -> Result<C::Return> {
+    let out = rpc(
+        url,
+        "eth_call",
+        json!([{"to": MODELS, "data": hex::encode_prefixed(c.abi_encode())}, "latest"]),
+    )?;
+    let bytes: Bytes = serde_json::from_value(out)?;
+    Ok(C::abi_decode_returns(&bytes)?)
+}
+
+/// Runs a model command.
+pub fn run_model(cmd: ModelCmd) -> Result<()> {
+    match cmd {
+        ModelCmd::Register {
+            wallet,
+            name,
+            weights,
+            tokenizer,
+            runtime,
+            parameters,
+            vram,
+            rpc: url,
+        } => {
+            let s = load_wallet(&wallet)?;
+            let cid = |c: &str| -> Result<Bytes> {
+                Ok(Bytes::from(c.parse::<Cid>().with_context(|| format!("CID {c}"))?.to_bytes()))
+            };
+            let data = IModelRegistry::registerCall {
+                name: name.clone(),
+                weights: cid(&weights)?,
+                tokenizer: tokenizer.as_deref().map(cid).transpose()?.unwrap_or_default(),
+                runtime,
+                parameters: parameters as u64,
+                vramMiB: vram,
+            }
+            .abi_encode();
+            let hash = send_tx(&url, &s, MODELS, U256::ZERO, data.into())?;
+            let id = first_indexed(&url, hash, "ModelRegistered(uint64,address,string,bytes)")?;
+            println!("model {id} registered: {name}");
+        }
+        ModelCmd::List { rpc: url } => {
+            let n = models_call(&url, IModelRegistry::modelCountCall {})?.to::<u64>();
+            if n == 0 {
+                println!("no models registered");
+            }
+            for id in 1..=n {
+                let m = models_call(&url, IModelRegistry::modelCall { id })?;
+                let providers = models_call(&url, IModelRegistry::providerCountCall { id })?;
+                let weights = Cid::try_from(m.weights.as_ref())
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|_| hex::encode_prefixed(&m.weights));
+                println!(
+                    "{id}: {} — {:.1}B parameters, {} MiB, {} — weights {weights} — {providers} provider(s)",
+                    m.name,
+                    m.parameters as f64 / 1e9,
+                    m.vramMiB,
+                    m.runtime
+                );
+            }
+        }
+        ModelCmd::Support { wallet, id, stop, rpc: url } => {
+            let s = load_wallet(&wallet)?;
+            let data = IModelRegistry::setSupportCall { id, serving: !stop }.abi_encode();
+            send_tx(&url, &s, MODELS, U256::ZERO, data.into())?;
+            println!(
+                "{} {} model {id}",
+                s.address(),
+                if stop { "no longer serves" } else { "serves" }
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Runs a job command.
@@ -872,9 +1561,14 @@ pub fn run_job(cmd: JobCmd) -> Result<()> {
             max_out,
             deadline,
             window,
+            wait,
+            logprobs,
             rpc: url,
         } => {
             let s = load_wallet(&wallet)?;
+            if !call(&url, IModelRegistry::existsCall { id: model })? {
+                bail!("model {model} is not in ModelRegistry (`boltchain model list`)");
+            }
             let mut request: Value = match (prompt, input) {
                 (Some(p), _) => json!({"messages": [{"role": "user", "content": p}]}),
                 (None, Some(f)) => serde_json::from_slice(&std::fs::read(&f)?)
@@ -883,8 +1577,12 @@ pub fn run_job(cmd: JobCmd) -> Result<()> {
             };
             request.as_object_mut().context("the request must be a JSON object")?.remove("model");
             request["max_tokens"] = json!(max_out);
+            if logprobs {
+                request["logprobs"] = json!(true);
+                request["top_logprobs"] = json!(5);
+            }
             let job = NewJob {
-                provider,
+                provider: provider.unwrap_or(Address::ZERO),
                 model,
                 request,
                 price_in: parse_bolt(&price_in)?,
@@ -895,7 +1593,22 @@ pub fn run_job(cmd: JobCmd) -> Result<()> {
                 window: window * 60,
             };
             let id = post_job(&url, &s, &job)?;
-            println!("job {id} posted; follow it with `boltchain job status {id}`");
+            if provider.is_none() {
+                println!("job {id} posted, open to any provider");
+            } else {
+                println!("job {id} posted");
+            }
+            if wait {
+                print_result(&watch_job(&url, &s, id, Duration::from_secs(3))?);
+            } else if provider.is_none() {
+                println!("run `boltchain job watch {id}` to share the input with whoever takes it");
+            } else {
+                println!("follow it with `boltchain job status {id}`");
+            }
+        }
+        JobCmd::Watch { wallet, id, rpc: url } => {
+            let s = load_wallet(&wallet)?;
+            print_result(&watch_job(&url, &s, id, Duration::from_secs(3))?);
         }
         JobCmd::Status { id, rpc: url } => {
             let j = call(&url, IComputeMarket::jobCall { id: U256::from(id) })?;
@@ -938,10 +1651,7 @@ pub fn run_job(cmd: JobCmd) -> Result<()> {
                 std::fs::write(&f, serde_json::to_vec_pretty(&v)?)?;
                 println!("saved to {}", f.display());
             }
-            match v["choices"][0]["message"]["content"].as_str() {
-                Some(text) => println!("{text}"),
-                None => println!("{}", serde_json::to_string_pretty(&v)?),
-            }
+            print_result(&v);
         }
         JobCmd::Approve { wallet, id, rpc: url } => {
             let s = load_wallet(&wallet)?;
@@ -994,6 +1704,77 @@ mod tests {
         assert!(similarity("the cat sat", "a dog ran") < 0.1);
         assert!((similarity("a b c d", "a b x y") - 2.0 / 6.0).abs() < 1e-9);
         assert_eq!(similarity("", ""), 1.0);
+    }
+
+    type Spec<'a> = (&'a str, f64, &'a [(&'a str, f64)]);
+
+    fn toks(spec: &[Spec]) -> Vec<TokenLogprobs> {
+        spec.iter()
+            .map(|(t, l, top)| TokenLogprobs {
+                token: t.to_string(),
+                logprob: *l,
+                top: top.iter().map(|(x, y)| (x.to_string(), *y)).collect(),
+            })
+            .collect()
+    }
+
+    const LIMITS: LogprobLimits = LogprobLimits { min_overlap: 0.5, tolerance: 1.0, tie_gap: 2.0 };
+
+    #[test]
+    fn logprobs_of_the_same_model_agree() {
+        // Another GPU: probabilities move a little, and the runs part at a near tie.
+        let delivered = toks(&[
+            ("The", -0.1, &[("The", -0.1), ("A", -2.5), ("This", -3.0)]),
+            (" sky", -0.3, &[(" sky", -0.3), (" sea", -1.6), (" sun", -3.2)]),
+            (" is", -0.05, &[(" is", -0.05), (" was", -3.1), (" looks", -4.0)]),
+        ]);
+        let rerun = toks(&[
+            ("The", -0.12, &[("The", -0.12), ("A", -2.4), ("This", -3.1)]),
+            (" sea", -0.9, &[(" sea", -0.9), (" sky", -1.1), (" sun", -3.0)]),
+        ]);
+        let note = compare_logprobs(&delivered, &rerun, LIMITS).unwrap();
+        assert!(note.starts_with("2 tokens compared"), "{note}");
+    }
+
+    #[test]
+    fn logprobs_of_another_model_or_invented_ones_are_caught() {
+        let rerun = toks(&[
+            ("Paris", -0.05, &[("Paris", -0.05), ("The", -3.5), ("It", -4.0)]),
+            (".", -0.2, &[(".", -0.2), (",", -2.0), ("!", -4.0)]),
+        ]);
+        // A token the model does not consider.
+        let other = toks(&[("Lyon", -0.1, &[("Lyon", -0.1), ("Paris", -2.6), ("Nice", -3.0)])]);
+        let why = compare_logprobs(&other, &rerun, LIMITS).unwrap_err();
+        assert!(why.contains("outside the model's top"), "{why}");
+        // A token the model ranks far below its best.
+        let low = toks(&[("It", -0.1, &[("It", -0.1), ("Paris", -2.5)])]);
+        let why = compare_logprobs(&low, &rerun, LIMITS).unwrap_err();
+        assert!(why.contains("nats below its best"), "{why}");
+        // Same tokens, made-up probabilities.
+        let made_up = toks(&[
+            ("Paris", -2.9, &[("Paris", -2.9), ("The", -0.5), ("It", -0.7)]),
+            (".", -2.5, &[(".", -2.5), (",", -0.1), ("!", -0.2)]),
+        ]);
+        let why = compare_logprobs(&made_up, &rerun, LIMITS).unwrap_err();
+        assert!(why.contains("difference above"), "{why}");
+        // Other candidates entirely (a different model agreeing on the first word).
+        let alien = toks(&[
+            ("Paris", -0.05, &[("Paris", -0.05), ("Berlin", -3.5), ("Rome", -4.0), ("Oslo", -4.5)]),
+            (".", -0.2, &[(".", -0.2), (";", -2.0), ("?", -4.0), (":", -4.4)]),
+        ]);
+        let why = compare_logprobs(&alien, &rerun, LIMITS).unwrap_err();
+        assert!(why.contains("overlap below"), "{why}");
+    }
+
+    #[test]
+    fn logprobs_parse_from_openai_responses() {
+        let v = json!({"choices": [{"logprobs": {"content": [
+            {"token": "Hi", "logprob": -0.5, "bytes": [72, 105], "top_logprobs": [{"token": "Hi", "logprob": -0.5}, {"token": "Hello", "logprob": -1.2}]}
+        ]}}]});
+        let t = token_logprobs(&v).unwrap();
+        assert_eq!(t[0].token, "Hi");
+        assert_eq!(t[0].top[1], ("Hello".to_string(), -1.2));
+        assert!(token_logprobs(&json!({"choices": [{"message": {}}]})).is_none());
     }
 
     #[test]
