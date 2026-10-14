@@ -74,7 +74,8 @@ fn params(cn: &str, serial: u64, ca: Option<u8>) -> CertificateParams {
     match ca {
         None => {
             p.is_ca = IsCa::ExplicitNoCa;
-            p.key_usages = vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::ContentCommitment];
+            p.key_usages =
+                vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::ContentCommitment];
         }
         Some(depth) => {
             p.is_ca = IsCa::Ca(if depth == u8::MAX {
@@ -143,7 +144,12 @@ fn pair(o: Vec<u8>, v: Vec<u8>) -> Vec<u8> {
 }
 
 /// The SGX extension of a PCK certificate.
-pub fn sgx_extension(ppid: &[u8; 16], comp_svn: &[u8; 16], pcesvn: u16, fmspc: &[u8; 6]) -> Vec<u8> {
+pub fn sgx_extension(
+    ppid: &[u8; 16],
+    comp_svn: &[u8; 16],
+    pcesvn: u16,
+    fmspc: &[u8; 6],
+) -> Vec<u8> {
     let mut tcb = Vec::new();
     for (i, s) in comp_svn.iter().enumerate() {
         tcb.extend(pair(sgx(&[2, i as u64 + 1]), int(*s as u64)));
@@ -210,10 +216,19 @@ impl SimIntel {
         let tcb = params("Boltchain Simulated TCB Signing", 3, None)
             .signed_by(&keypair(&tcb_key), &root, &root_kp)
             .expect("TCB signing");
-        Self { seed: seed.to_vec(), root_key, root, root_kp, platform_ca, platform_kp, tcb_key, tcb }
+        Self {
+            seed: seed.to_vec(),
+            root_key,
+            root,
+            root_kp,
+            platform_ca,
+            platform_kp,
+            tcb_key,
+            tcb,
+        }
     }
 
-    /// The development PKI every dev chain trusts (`boltchain genesis --dev`).
+    /// The development PKI every dev chain trusts (`boltchain genesis make-dev`).
     pub fn dev() -> Self {
         Self::new(b"boltchain-dev")
     }
@@ -257,7 +272,12 @@ impl SimIntel {
         if !up_to_date {
             levels.push(level(&newer_sgx, PCESVN, &tdx_cur, "UpToDate"));
         }
-        levels.push(level(&COMP_SVN, PCESVN, &tdx_cur, if up_to_date { "UpToDate" } else { "OutOfDate" }));
+        levels.push(level(
+            &COMP_SVN,
+            PCESVN,
+            &tdx_cur,
+            if up_to_date { "UpToDate" } else { "OutOfDate" },
+        ));
         levels.push(level(&[0; 16], 0, &[0; 16], "OutOfDate"));
         let zero48 = "00".repeat(48);
         let body = format!(
@@ -325,13 +345,15 @@ impl SimIntel {
     pub fn platform(&self, id: u64) -> SimPlatform {
         let label = format!("platform/{id}");
         let pck_key = key(&self.seed, &format!("{label}/pck"));
-        let ppid: [u8; 16] = sha256(&[&self.seed, label.as_bytes(), b"ppid"])[..16].try_into().unwrap();
+        let ppid: [u8; 16] =
+            sha256(&[&self.seed, label.as_bytes(), b"ppid"])[..16].try_into().unwrap();
         let mut p = params("Boltchain Simulated PCK Certificate", 1000 + id, None);
         p.custom_extensions = vec![CustomExtension::from_oid_content(
             &SGX,
             sgx_extension(&ppid, &COMP_SVN, PCESVN, &FMSPC),
         )];
-        let pck = p.signed_by(&keypair(&pck_key), &self.platform_ca, &self.platform_kp).expect("PCK");
+        let pck =
+            p.signed_by(&keypair(&pck_key), &self.platform_ca, &self.platform_kp).expect("PCK");
         let chain = pem_encode(&[pck.der(), self.platform_ca.der(), self.root.der()]);
         SimPlatform {
             ppid,

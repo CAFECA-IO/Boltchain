@@ -439,7 +439,10 @@ impl Collateral {
         let Some(qe) = &self.qe else { return (status::UNKNOWN, 0) };
         let ms: [u8; 4] = std::array::from_fn(|i| miscselect[i] & qe.miscselect_mask[i]);
         let at: [u8; 16] = std::array::from_fn(|i| attributes[i] & qe.attributes_mask[i]);
-        if ms != qe.miscselect || at != qe.attributes || *mrsigner != qe.mrsigner || isvprodid != qe.isvprodid
+        if ms != qe.miscselect
+            || at != qe.attributes
+            || *mrsigner != qe.mrsigner
+            || isvprodid != qe.isvprodid
         {
             return (status::UNKNOWN, qe.next_update);
         }

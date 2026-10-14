@@ -109,7 +109,9 @@ impl Relay {
                 IEnclaveLease::checkpointCall::SELECTOR | IEnclaveLease::activateCall::SELECTOR => {
                     // Both pay the lease's relay fee to the sender.
                     let id = if sel == IEnclaveLease::checkpointCall::SELECTOR {
-                        IEnclaveLease::checkpointCall::abi_decode(data).map_err(|e| e.to_string())?.id
+                        IEnclaveLease::checkpointCall::abi_decode(data)
+                            .map_err(|e| e.to_string())?
+                            .id
                     } else {
                         IEnclaveLease::activateCall::abi_decode(data).map_err(|e| e.to_string())?.id
                     };

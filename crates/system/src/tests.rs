@@ -260,10 +260,13 @@ fn genesis_deploys_system_contracts() {
     assert!(evm.view(CONSENSUS, IConsensusRegistry::committeeCall { epoch: 0 }).ids.is_empty());
     assert_eq!(evm.view(STAKING, IStakingManager::countCall {}), 0);
     assert_eq!(evm.view(REWARDS, IRewardDistributor::supplyCall {}), U256::ZERO);
-    // Only the system contracts (ComputeMarket included, ADR 0011) and the two Osaka predeploys.
+    // Only the system contracts (ComputeMarket and ModelRegistry, ADR 0011; the TEE contracts,
+    // ADR 0013) and the two Osaka predeploys.
     let alloc = genesis_alloc(&g).unwrap();
-    assert!(alloc.contains_key(&COMPUTE));
-    assert_eq!(alloc.len(), 7, "{:?}", alloc.keys().collect::<Vec<_>>());
+    for a in [COMPUTE, MODELS, IMAGES, COLLATERAL, TDX, LEASES, WALLET] {
+        assert!(alloc.contains_key(&a), "{a}");
+    }
+    assert_eq!(alloc.len(), 13, "{:?}", alloc.keys().collect::<Vec<_>>());
     assert!(alloc.values().all(|a| a.balance.is_zero()));
 }
 
@@ -595,7 +598,7 @@ fn devnet_genesis_hash_is_pinned() {
     let g = Genesis::from_json(include_str!("../../../genesis/devnet.json")).unwrap();
     assert_eq!(
         crate::genesis_hash(&g).unwrap(),
-        "0x4cb847e817cbec813e1ce0e90b9fa1b98d2d09ec8ce511a6d7f9dc883e09418e"
+        "0xdd0c76a261ea871c3134fd81159bb069cc2abb31ff37c2538daa5173dd05e44b"
             .parse::<B256>()
             .unwrap()
     );

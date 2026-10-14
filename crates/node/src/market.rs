@@ -26,7 +26,10 @@ fn cid_text(b: &[u8]) -> String {
 }
 
 fn limit(query: &str) -> u64 {
-    crate::explorer::query_param(query, "limit").and_then(|v| v.parse().ok()).unwrap_or(25).clamp(1, MAX)
+    crate::explorer::query_param(query, "limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(25)
+        .clamp(1, MAX)
 }
 
 fn job_state(s: u8) -> &'static str {
@@ -47,7 +50,10 @@ impl Explorer {
     }
 
     fn deployed(&self, r: &Tx<'_, RO>, a: Address) -> bool {
-        r.account(&a).ok().flatten().is_some_and(|acc| acc.code_hash != alloy_primitives::KECCAK256_EMPTY)
+        r.account(&a)
+            .ok()
+            .flatten()
+            .is_some_and(|acc| acc.code_hash != alloy_primitives::KECCAK256_EMPTY)
     }
 
     fn job_json(&self, id: u64, j: &IComputeMarket::Job) -> Value {
@@ -151,7 +157,10 @@ impl Explorer {
     /// `GET /api/compute/blocks?cids=a,b&root=r`: blocks of a sealed job file (fetched from the
     /// network when this node lacks them), hex.
     pub(crate) fn compute_blocks(&self, query: &str) -> ApiResult {
-        let host = self.host.as_ref().ok_or_else(|| (503, "this node does not host blocks".to_string()))?;
+        let host = self
+            .host
+            .as_ref()
+            .ok_or_else(|| (503, "this node does not host blocks".to_string()))?;
         let cids: Vec<String> = crate::explorer::query_param(query, "cids")
             .unwrap_or("")
             .split(',')
@@ -169,7 +178,10 @@ impl Explorer {
     /// `POST /api/compute/host` `{ "root": cid, "blocks": [[cid, hex]…] }`: keeps a sealed job
     /// file's blocks (each checked against its CID) and announces it to storage providers.
     pub(crate) fn compute_host(&self, body: &[u8]) -> ApiResult {
-        let host = self.host.as_ref().ok_or_else(|| (503, "this node does not host blocks".to_string()))?;
+        let host = self
+            .host
+            .as_ref()
+            .ok_or_else(|| (503, "this node does not host blocks".to_string()))?;
         let v: Value = serde_json::from_slice(body).map_err(|e| bad(e.to_string()))?;
         let root = v["root"].as_str().ok_or_else(|| bad("root"))?.to_string();
         let mut blocks = Vec::new();
@@ -189,7 +201,8 @@ impl Explorer {
     fn machine_json(&self, r: &Tx<'_, RO>, m: u64) -> ApiResult {
         let mc = self.v(r, LEASES, IEnclaveLease::machineCall { m })?;
         let o = self.v(r, LEASES, IEnclaveLease::operatorsCall { operator: mc.operator })?;
-        let black = self.v(r, LEASES, IEnclaveLease::blacklistedCall { machineId: mc.machineId })?;
+        let black =
+            self.v(r, LEASES, IEnclaveLease::blacklistedCall { machineId: mc.machineId })?;
         Ok(json!({
             "id": m, "operator": mc.operator, "kind": if mc.kind == 1 { "tdx" } else { "tpm" },
             "verified": mc.verified, "available": mc.available, "tcbStatus": mc.tcbStatus,

@@ -160,6 +160,17 @@ Boltchain 要成為 AI 算力的 Airbnb：
 
 **測試**：`m7_compute` 在開發鏈上跑完整流程：執行者登記、委託、以模擬後端執行與交付、委託者讀回並付款；第二筆工作被爭議，委託者分享檔案，小組成員以 `boltchain judge` 在另一個回答不同的後端重跑，判定執行者有錯，委託者拿回款項、執行者被罰押金。
 
+## 實作紀錄：中繼、開放承接、模型登記、log-probability 判定、瀏覽器（2026-10-14）
+
+- **中繼**：節點加 `--relay-wallet <帳戶檔> --relay-min-fee <BOLT>` 就開放 `bolt_relay`。它只代送認得的呼叫（`ComputeMarket` 的 `registerFor`、`acceptFor`、`deliverFor`、`settle`、`payout`；`EnclaveLease` 的 `checkpoint`、`activate`、`payout`），費用低於下限、或 `eth_estimateGas` 顯示會失敗的都拒絕，壞請求不花中繼的錢。執行者端 `provider register|run --relay <URL> --relay-fee <BOLT>`。
+- **中繼費**：`acceptFor` 簽 `(id, fee)`、`deliverFor` 簽 `(id, output, tokensIn, tokensOut, fee)`；代送者與費用記在 `relays[id]`（上限 0.1 BOLT），結算時先從工作款項付給中繼，剩下的才給執行者；工作沒有結算（退款、裁決執行者有錯）就不付，中繼承擔與執行者相同的風險。
+- **開放承接**：`job post` 不給 `--provider` 就是開放工作，輸入只加密給委託者；任何登記的執行者都能接（`provider run --open --min-price-in/out`），接單後委託者的 `job post --wait` / `job watch` 用 `add_recipient` 把執行者加為收件人並 `shareInput`。執行者發現輸入還讀不到時會稍後重試。
+- **ModelRegistry**（`0xB017…0007`）：任何人登記模型（名稱、權重 CID、tokenizer、執行環境、參數量、建議 VRAM），同一組權重 / tokenizer / 執行環境不能重複登記，執行者可以宣告支援（`setSupport`）。`post` 要求模型已登記。命令列 `boltchain model register|list|support`。
+- **log-probability 判定**：執行者預設要求後端回傳每個輸出 token 的 top-5 log-probability 並交付；`boltchain judge` 先檢查聲稱的 token 數不超過列出的數量、token 拼起來等於答案，再以貪婪解碼重跑，比對 top-k 重疊（預設 ≥ 0.5）、平均 log-probability 差距（≤ 1.0）與第一個分歧處的差距（`--tie-gap` 2.0，處理近乎平手的 token）。`job post --logprobs` 讓缺少 log-probability 的交付在爭議中直接判錯。
+- **瀏覽器**：「AI 推論」頁列出模型、執行者（從最近 500 件工作整理）、工作與工作詳細頁。節點設定了 CAFECA 錢包時可以直接發出工作：提示在瀏覽器內以 bolt-vault（WASM，約 350 KB，`scripts/build-vault-wasm.sh`）加密給委託者在瀏覽器保存的 X25519 金鑰與指定的執行者，區塊交給節點保存（`POST /api/compute/host`），以 CAFECA 頻道送出 `setEncryptionKey`（需要時）與 `post`；結果在瀏覽器內解密（`GET /api/compute/blocks`）。網頁只能發出指定執行者的工作，開放工作要用命令列（需要監看接單）。
+- **部署**：新版 `ComputeMarket` 與 `ModelRegistry` 在開發鏈與主網的 genesis；公開測試網在第 233401 塊的硬分叉 `tee` 換上（`relays` 放在儲存佈局最後，舊工作照常結算，有測試）。
+- **測試**：`m7_compute`（零 BOLT 執行者經中繼登記、接開放工作、交付附 log-probability 的結果，中繼與執行者的收款）、`m7_verdict`、合約測試 `relayers_of_signed_actions_are_paid_from_the_job`、`jobs_name_a_registered_model`、`the_testnet_tee_fork_keeps_compute_state`、判定程式的單元測試。
+
 ## 需要新增的元件
 
 | 元件 | 內容 | 位置 |

@@ -271,7 +271,13 @@ impl VerdictCert {
 
 /// The message a verifier signs for a TEE attestation request (ADR 0013 §6.4): whether the
 /// evidence is genuine and matches, and the machine ID it names (zero when refused).
-pub fn attest_msg(chain_id: u64, epoch: u64, request: u64, ok: bool, machine: &[u8; 32]) -> Vec<u8> {
+pub fn attest_msg(
+    chain_id: u64,
+    epoch: u64,
+    request: u64,
+    ok: bool,
+    machine: &[u8; 32],
+) -> Vec<u8> {
     [
         b"boltchain/attest/v1".as_slice(),
         &chain_id.to_be_bytes(),
@@ -370,7 +376,10 @@ impl AttestCert {
     pub fn aggregate(votes: &[AttestVote], n: usize) -> Option<Self> {
         let first = votes.first()?;
         if votes.iter().any(|v| {
-            v.epoch != first.epoch || v.request != first.request || v.ok != first.ok || v.machine != first.machine
+            v.epoch != first.epoch
+                || v.request != first.request
+                || v.ok != first.ok
+                || v.machine != first.machine
         }) {
             return None;
         }

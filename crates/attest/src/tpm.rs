@@ -335,10 +335,14 @@ pub struct Event {
 /// header event, `StartupLocality`, and skips `EV_NO_ACTION` events.
 pub fn replay(log: &[u8]) -> Result<([[u8; 32]; 24], Vec<Event>), Error> {
     let le32 = |d: &[u8], p: usize| -> Result<u32, Error> {
-        Ok(u32::from_le_bytes(d.get(p..p + 4).ok_or_else(|| tpm_err("event log"))?.try_into().unwrap()))
+        Ok(u32::from_le_bytes(
+            d.get(p..p + 4).ok_or_else(|| tpm_err("event log"))?.try_into().unwrap(),
+        ))
     };
     let le16 = |d: &[u8], p: usize| -> Result<u16, Error> {
-        Ok(u16::from_le_bytes(d.get(p..p + 2).ok_or_else(|| tpm_err("event log"))?.try_into().unwrap()))
+        Ok(u16::from_le_bytes(
+            d.get(p..p + 2).ok_or_else(|| tpm_err("event log"))?.try_into().unwrap(),
+        ))
     };
     // Header: TCG_PCR_EVENT (SHA-1 format) carrying the Spec ID event.
     let size = le32(log, 28)? as usize;

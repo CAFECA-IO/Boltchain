@@ -21,7 +21,8 @@ cargo run -p boltchain -- genesis inspect genesis/devnet.json
 
 dev 鏈（`"dev": true`，chain id 不可為 8017）可以：注資帳戶、在 genesis 質押驗證者（`devValidators`）、
 調低門檻（階段 B：`checkpointMinStakers`、`checkpointMinStakeBolt`、`checkpointDepth`；PoS：`posMinStakers`、`posMinStakeBolt`、`posStreakEpochs`，階段 B 的門檻不可高於 PoS）、縮短 epoch、改挖礦參數，
-或把 `pow.algorithm` 設成 `keccak` 以加快測試。
+或把 `pow.algorithm` 設成 `keccak` 以加快測試，
+並可用 `devTeeRoot`（P-256 公鑰 `[x, y]`）把 `TeeCollateral` 的信任根換成模擬的 PKI，讓 `enclave runtime --simulate` 的機器通過證明（ADR 0013；`dev.json`、`pow-dev.json` 與 `boltchain genesis make-dev` 產生的檔案都用 `SimIntel::dev()` 的根）。
 
 ## 主網範本 `mainnet.template.json`
 

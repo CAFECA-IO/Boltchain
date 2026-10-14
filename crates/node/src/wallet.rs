@@ -204,7 +204,12 @@ pub fn format_bolt(wei: U256) -> String {
 
 /// A plain HTTP/1.1 request (`http://` only); returns the status and the body (Content-Length
 /// or read to close; chunked bodies are de-chunked).
-pub fn http(method: &str, url: &str, body: Option<&[u8]>, timeout: Duration) -> Result<(u16, Vec<u8>)> {
+pub fn http(
+    method: &str,
+    url: &str,
+    body: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<(u16, Vec<u8>)> {
     let rest = url.strip_prefix("http://").context("only http:// endpoints are supported")?;
     let (host, path) =
         rest.split_once('/').map(|(h, p)| (h, format!("/{p}"))).unwrap_or((rest, "/".into()));
@@ -303,7 +308,8 @@ pub fn send_delegated(
     let gas_price = quantity(&rpc(rpc_url, "eth_gasPrice", json!([]))?)?.to::<u128>();
     let tip = 1_000_000u128;
     // The sender is the authority: its authorization takes the nonce after the transaction's.
-    let auth = Authorization { chain_id: U256::from(chain_id), address: delegate, nonce: nonce + 1 };
+    let auth =
+        Authorization { chain_id: U256::from(chain_id), address: delegate, nonce: nonce + 1 };
     let sig = signer.sign_hash_sync(&auth.signature_hash())?;
     let signed = auth.into_signed(sig);
     let mut tx = TxEip7702 {

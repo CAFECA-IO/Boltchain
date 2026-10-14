@@ -109,13 +109,9 @@ impl Cert {
             return Err(Error::Der("not a P-256 key"));
         }
         let key = (pk[1..33].try_into().unwrap(), pk[33..].try_into().unwrap());
-        let sig = Signature::from_der(&c.signature_value.data)
-            .map_err(|_| Error::Der("signature"))?;
-        let ext = c
-            .extensions()
-            .iter()
-            .map(|e| (e.oid.to_id_string(), e.value.to_vec()))
-            .collect();
+        let sig =
+            Signature::from_der(&c.signature_value.data).map_err(|_| Error::Der("signature"))?;
+        let ext = c.extensions().iter().map(|e| (e.oid.to_id_string(), e.value.to_vec())).collect();
         Ok(Self {
             der: der.to_vec(),
             tbs: c.tbs_certificate.as_ref().to_vec(),
@@ -165,8 +161,7 @@ impl Crl {
     /// Parses a DER CRL.
     pub fn parse(der: &[u8]) -> Result<Self, Error> {
         use x509_parser::revocation_list::CertificateRevocationList;
-        let (_, l) =
-            CertificateRevocationList::from_der(der).map_err(|_| Error::Der("CRL"))?;
+        let (_, l) = CertificateRevocationList::from_der(der).map_err(|_| Error::Der("CRL"))?;
         let sig =
             Signature::from_der(&l.signature_value.data).map_err(|_| Error::Der("signature"))?;
         let mut serials = Vec::new();
@@ -232,7 +227,9 @@ pub(crate) fn base64_encode(d: &[u8]) -> String {
     let mut s = String::new();
     for c in d.chunks(3) {
         let n = c.len();
-        let v = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        let v = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
         for i in 0..4 {
             if i <= n {
                 s.push(A[(v >> (18 - 6 * i) & 63) as usize] as char);

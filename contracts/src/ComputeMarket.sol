@@ -110,8 +110,6 @@ contract ComputeMarket is SystemContract {
         uint128 deliverFee;
     }
 
-    mapping(uint256 => Relay) public relays;
-
     // ------------------------------------------------------------------ disputes and panels
 
     struct Dispute {
@@ -125,6 +123,10 @@ contract ComputeMarket is SystemContract {
     uint256[] internal unassigned;
     /// Verifier panel (validator ids) per epoch.
     mapping(uint64 => uint32[]) internal panels;
+
+    /// Relayers of each job's signed actions (declared last: the public testnet's contract,
+    /// replaced at its `tee` fork, keeps its storage layout).
+    mapping(uint256 => Relay) public relays;
 
     // ------------------------------------------------------------------ events and errors
 

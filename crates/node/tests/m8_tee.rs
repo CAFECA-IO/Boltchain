@@ -56,7 +56,10 @@ fn genesis(accounts: &[Address]) -> Genesis {
         );
     }
     for a in accounts {
-        g.alloc.insert(*a, GenesisAccount { balance: U256::from(10u128.pow(21)), ..Default::default() });
+        g.alloc.insert(
+            *a,
+            GenesisAccount { balance: U256::from(10u128.pow(21)), ..Default::default() },
+        );
     }
     g
 }
@@ -104,7 +107,8 @@ fn wallet_file(dir: &Path, name: &str, s: &PrivateKeySigner) -> String {
 }
 
 fn cli(args: &[&str]) -> String {
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_boltchain")).args(args).output().unwrap();
+    let out =
+        std::process::Command::new(env!("CARGO_BIN_EXE_boltchain")).args(args).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     eprintln!("$ boltchain {}\n{stdout}{}", args.join(" "), String::from_utf8_lossy(&out.stderr));
     assert!(
@@ -117,7 +121,8 @@ fn cli(args: &[&str]) -> String {
 }
 
 fn cli_fails(args: &[&str]) -> String {
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_boltchain")).args(args).output().unwrap();
+    let out =
+        std::process::Command::new(env!("CARGO_BIN_EXE_boltchain")).args(args).output().unwrap();
     assert!(!out.status.success(), "boltchain {} should have failed", args.join(" "));
     String::from_utf8_lossy(&out.stderr).to_string()
 }
@@ -137,9 +142,23 @@ impl Runtime {
     fn start(kind: &str, seed: &str, rpc: &str, relay: &str, state: &Path) -> Self {
         let port = free_port();
         let args: Vec<String> = [
-            "enclave", "runtime", "--simulate", "--kind", kind, "--seed", seed, "--listen",
-            &format!("127.0.0.1:{port}"), "--state", &state.display().to_string(),
-            "--checkpoint-every", "3", "--relay", relay, "--rpc", rpc,
+            "enclave",
+            "runtime",
+            "--simulate",
+            "--kind",
+            kind,
+            "--seed",
+            seed,
+            "--listen",
+            &format!("127.0.0.1:{port}"),
+            "--state",
+            &state.display().to_string(),
+            "--checkpoint-every",
+            "3",
+            "--relay",
+            relay,
+            "--rpc",
+            rpc,
         ]
         .iter()
         .map(|s| s.to_string())
@@ -178,7 +197,8 @@ impl Runtime {
     /// The enclave key the runtime holds for `lease` (it never leaves a real enclave).
     fn key(&self, lease: u64) -> PrivateKeySigner {
         let st: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(self.state.join("runtime.json")).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(self.state.join("runtime.json")).unwrap())
+                .unwrap();
         let k = st["leases"][lease.to_string()]["key"].as_str().unwrap();
         PrivateKeySigner::from_slice(&alloy_primitives::hex::decode(k).unwrap()).unwrap()
     }
@@ -207,8 +227,12 @@ async fn agents_lease_attested_enclaves() {
         .with_test_writer()
         .try_init();
     let admin = funded();
-    let (op1, op2, op3, renter) =
-        (PrivateKeySigner::random(), PrivateKeySigner::random(), PrivateKeySigner::random(), PrivateKeySigner::random());
+    let (op1, op2, op3, renter) = (
+        PrivateKeySigner::random(),
+        PrivateKeySigner::random(),
+        PrivateKeySigner::random(),
+        PrivateKeySigner::random(),
+    );
     let g = genesis(&[op2.address(), op3.address(), renter.address()]);
     let key_sets: Vec<Vec<u32>> = vec![vec![0, 3, 6], vec![1, 4], vec![2, 5]];
     let mut chains = Vec::new();
@@ -302,36 +326,115 @@ async fn agents_lease_attested_enclaves() {
         let out = cli(&["collateral", "update", "--simulated", "--wallet", &w_admin, "--rpc", r]);
         assert!(out.contains("document(s) submitted"), "{out}");
         eprintln!("{out}");
-        assert!(cli(&["collateral", "show", "--fmspc", "00906ED50000", "--rpc", r]).contains("evaluation 1"));
-        cli(&["image", "register", "--wallet", &w_renter, "--name", "bolt-art", "--source", "bafy-src", "--rpc", r]);
-        cli(&["image", "measure", "--wallet", &w_renter, "--image", "1", "--kind", "tdx", "--simulate", "--rpc", r]);
-        cli(&["image", "measure", "--wallet", &w_renter, "--image", "1", "--kind", "tpm", "--simulate", "--rpc", r]);
+        assert!(
+            cli(&["collateral", "show", "--fmspc", "00906ED50000", "--rpc", r])
+                .contains("evaluation 1")
+        );
+        cli(&[
+            "image", "register", "--wallet", &w_renter, "--name", "bolt-art", "--source",
+            "bafy-src", "--rpc", r,
+        ]);
+        cli(&[
+            "image",
+            "measure",
+            "--wallet",
+            &w_renter,
+            "--image",
+            "1",
+            "--kind",
+            "tdx",
+            "--simulate",
+            "--rpc",
+            r,
+        ]);
+        cli(&[
+            "image",
+            "measure",
+            "--wallet",
+            &w_renter,
+            "--image",
+            "1",
+            "--kind",
+            "tpm",
+            "--simulate",
+            "--rpc",
+            r,
+        ]);
         assert!(cli(&["image", "list", "--rpc", r]).contains("TPM (T2)"));
 
         // A TDX operator: its gas comes from a small transfer; its runtime submits via the relay.
-        boltchain::wallet::send_tx(r, &admin, op1.address(), U256::from(10u128.pow(20)), Default::default()).unwrap();
+        boltchain::wallet::send_tx(
+            r,
+            &admin,
+            op1.address(),
+            U256::from(10u128.pow(20)),
+            Default::default(),
+        )
+        .unwrap();
         let a_state = tmp.path().join("runtime-a");
         let mut rt_a = Runtime::start("tdx", "machine-a", r, &rpc0, &a_state);
-        let out = cli(&["enclave", "register", "--wallet", &w_op1, "--runtime", &rt_a.url, "--price", "1", "--rpc", r]);
+        let out = cli(&[
+            "enclave",
+            "register",
+            "--wallet",
+            &w_op1,
+            "--runtime",
+            &rt_a.url,
+            "--price",
+            "1",
+            "--rpc",
+            r,
+        ]);
         assert!(out.contains("machine 1 registered and verified"), "{out}");
         cli(&["enclave", "bond", "--wallet", &w_op1, "deposit", "64", "--rpc", r]);
         assert!(cli(&["lease", "offers", "--rpc", r]).contains("machine 1: TDX (T1)"));
 
         // The lease: escrow, activation through the relay, local verification, a secret.
         let agent = B256::repeat_byte(0xa9).to_string();
-        let out = cli(&["lease", "create", "--wallet", &w_renter, "--machine", "1", "--image", "1", "--agent", &agent, "--hours", "10", "--min-bond", "32", "--rpc", r]);
+        let out = cli(&[
+            "lease",
+            "create",
+            "--wallet",
+            &w_renter,
+            "--machine",
+            "1",
+            "--image",
+            "1",
+            "--agent",
+            &agent,
+            "--hours",
+            "10",
+            "--min-bond",
+            "32",
+            "--rpc",
+            r,
+        ]);
         assert!(out.contains("lease 1 created"), "{out}");
-        let out = cli(&["enclave", "activate", "--lease", "1", "--runtime", &rt_a.url, "--relay", &rpc0, "--rpc", r]);
+        let out = cli(&[
+            "enclave",
+            "activate",
+            "--lease",
+            "1",
+            "--runtime",
+            &rt_a.url,
+            "--relay",
+            &rpc0,
+            "--rpc",
+            r,
+        ]);
         assert!(out.contains("lease 1: active"), "{out}");
         let out = cli(&["lease", "verify", "1", "--simulated", "--rpc", r]);
         assert!(out.contains("safe to deliver secrets"), "{out}");
         let secret = tmp.path().join("secret.txt");
         std::fs::write(&secret, b"sk-live-api-key-for-the-agent").unwrap();
-        let out = cli(&["lease", "deliver", "1", "--file", &secret.display().to_string(), "--rpc", r]);
+        let out =
+            cli(&["lease", "deliver", "1", "--file", &secret.display().to_string(), "--rpc", r]);
         assert!(out.contains("secret delivered"), "{out}");
 
         // Checkpoints arrive through the relay.
-        let version = |c: &Chain, id: u64| view(c, LEASES, IEnclaveLease::leaseCall { id: U256::from(id) }).version;
+        let version = |c: &Chain, id: u64| {
+            view(c, LEASES, IEnclaveLease::leaseCall { id: U256::from(id) }).version
+        };
         wait("checkpoints", 60, || version(&chain, 1) >= 2);
         let snapshot = std::fs::read(a_state.join("runtime.json")).unwrap();
         wait("more checkpoints", 60, || version(&chain, 1) >= 4);
@@ -350,18 +453,45 @@ async fn agents_lease_attested_enclaves() {
         // The operator leaves; the renter moves the lease to another machine.
         let b_state = tmp.path().join("runtime-b");
         let rt_b = Runtime::start("tdx", "machine-b", r, &rpc0, &b_state);
-        assert!(cli(&["enclave", "register", "--wallet", &w_op3, "--runtime", &rt_b.url, "--price", "1", "--rpc", r]).contains("machine 2 registered"));
+        assert!(
+            cli(&[
+                "enclave",
+                "register",
+                "--wallet",
+                &w_op3,
+                "--runtime",
+                &rt_b.url,
+                "--price",
+                "1",
+                "--rpc",
+                r
+            ])
+            .contains("machine 2 registered")
+        );
         cli(&["enclave", "bond", "--wallet", &w_op3, "deposit", "40", "--rpc", r]);
         cli_fails(&["lease", "migrate", "--wallet", &w_renter, "1", "--to", "2", "--rpc", r]);
         cli(&["enclave", "exit", "--wallet", &w_op1, "--lease", "1", "--rpc", r]);
         cli(&["lease", "migrate", "--wallet", &w_renter, "1", "--to", "2", "--rpc", r]);
         let old_key = rt_a.key(1);
-        cli(&["enclave", "activate", "--lease", "1", "--runtime", &rt_b.url, "--relay", &rpc0, "--rpc", r]);
+        cli(&[
+            "enclave",
+            "activate",
+            "--lease",
+            "1",
+            "--runtime",
+            &rt_b.url,
+            "--relay",
+            &rpc0,
+            "--rpc",
+            r,
+        ]);
         let l = view(&chain, LEASES, IEnclaveLease::leaseCall { id: U256::from(1) });
         assert_eq!(l.machine, 2);
         assert_ne!(l.signer, old_key.address());
         wait("checkpoints on the new machine", 60, || version(&chain, 1) > after_stop);
-        assert!(cli(&["lease", "verify", "1", "--simulated", "--rpc", r]).contains("safe to deliver"));
+        assert!(
+            cli(&["lease", "verify", "1", "--simulated", "--rpc", r]).contains("safe to deliver")
+        );
 
         // Equivocation: two states for one version, both signed by machine 2's enclave key.
         let key_b = rt_b.key(1);
@@ -369,49 +499,158 @@ async fn agents_lease_attested_enclaves() {
         let signed = |root: B256| {
             let cid = keccak256(root);
             let bh = B256::repeat_byte(7);
-            let d = view(&chain, LEASES, IEnclaveLease::checkpointDigestCall { id: U256::from(1), version: v, stateRoot: root, cidHash: cid, seenBlockhash: bh });
-            IEnclaveLease::Signed { stateRoot: root, cidHash: cid, seenBlockhash: bh, sig: key_b.sign_hash_sync(&d).unwrap().as_bytes().to_vec().into() }
+            let d = view(
+                &chain,
+                LEASES,
+                IEnclaveLease::checkpointDigestCall {
+                    id: U256::from(1),
+                    version: v,
+                    stateRoot: root,
+                    cidHash: cid,
+                    seenBlockhash: bh,
+                },
+            );
+            IEnclaveLease::Signed {
+                stateRoot: root,
+                cidHash: cid,
+                seenBlockhash: bh,
+                sig: key_b.sign_hash_sync(&d).unwrap().as_bytes().to_vec().into(),
+            }
         };
-        let data = IEnclaveLease::reportEquivocationCall { id: U256::from(1), version: v, a: signed(B256::repeat_byte(1)), b: signed(B256::repeat_byte(2)) }.abi_encode();
+        let data = IEnclaveLease::reportEquivocationCall {
+            id: U256::from(1),
+            version: v,
+            a: signed(B256::repeat_byte(1)),
+            b: signed(B256::repeat_byte(2)),
+        }
+        .abi_encode();
         boltchain::wallet::send_tx(r, &admin, LEASES, U256::ZERO, data.into()).unwrap();
         let mid = view(&chain, LEASES, IEnclaveLease::machineCall { m: 2 }).machineId;
         assert!(view(&chain, LEASES, IEnclaveLease::blacklistedCall { machineId: mid }));
-        assert_eq!(view(&chain, LEASES, IEnclaveLease::operatorsCall { operator: op3.address() }).bond, U256::ZERO);
-        assert_eq!(view(&chain, LEASES, IEnclaveLease::balanceOfCall { account: admin.address() }), U256::from(20u128 * 10u128.pow(18)));
+        assert_eq!(
+            view(&chain, LEASES, IEnclaveLease::operatorsCall { operator: op3.address() }).bond,
+            U256::ZERO
+        );
+        assert_eq!(
+            view(&chain, LEASES, IEnclaveLease::balanceOfCall { account: admin.address() }),
+            U256::from(20u128 * 10u128.pow(18))
+        );
         assert_eq!(view(&chain, LEASES, IEnclaveLease::leaseCall { id: U256::from(1) }).state, 4);
         drop(rt_b);
 
         // A T2 machine: the verifier panel appraises its evidence and challenges its TPM.
         let c_state = tmp.path().join("runtime-c");
         let rt_c = Runtime::start("tpm", "t2-machine", r, &rpc0, &c_state);
-        let out = cli(&["enclave", "register", "--wallet", &w_op2, "--runtime", &rt_c.url, "--price", "0.5", "--gpu", "GB10", "--rpc", r]);
+        let out = cli(&[
+            "enclave",
+            "register",
+            "--wallet",
+            &w_op2,
+            "--runtime",
+            &rt_c.url,
+            "--price",
+            "0.5",
+            "--gpu",
+            "GB10",
+            "--rpc",
+            r,
+        ]);
         assert!(out.contains("machine 3 registered; the verifier panel"), "{out}");
-        wait("the panel to verify the T2 machine", 120, || view(&chain, LEASES, IEnclaveLease::machineCall { m: 3 }).verified);
-        cli(&["lease", "create", "--wallet", &w_renter, "--machine", "3", "--image", "1", "--agent", &agent, "--hours", "4", "--rpc", r]);
-        cli(&["enclave", "activate", "--lease", "2", "--runtime", &rt_c.url, "--wallet", &w_op2, "--rpc", r]);
+        wait("the panel to verify the T2 machine", 120, || {
+            view(&chain, LEASES, IEnclaveLease::machineCall { m: 3 }).verified
+        });
+        cli(&[
+            "lease",
+            "create",
+            "--wallet",
+            &w_renter,
+            "--machine",
+            "3",
+            "--image",
+            "1",
+            "--agent",
+            &agent,
+            "--hours",
+            "4",
+            "--rpc",
+            r,
+        ]);
+        cli(&[
+            "enclave",
+            "activate",
+            "--lease",
+            "2",
+            "--runtime",
+            &rt_c.url,
+            "--wallet",
+            &w_op2,
+            "--rpc",
+            r,
+        ]);
         wait("the panel to activate the T2 lease", 120, || {
             view(&chain, LEASES, IEnclaveLease::leaseCall { id: U256::from(2) }).state == 3
         });
-        assert!(cli(&["lease", "verify", "2", "--simulated", "--rpc", r]).contains("safe to deliver"));
+        assert!(
+            cli(&["lease", "verify", "2", "--simulated", "--rpc", r]).contains("safe to deliver")
+        );
         wait("T2 checkpoints", 60, || version(&chain, 2) >= 1);
 
         // The renter's account delegates to the limited wallet; the enclave key spends in it.
         let shop = Address::repeat_byte(0x5b);
-        cli(&["lease", "wallet", "--wallet", &w_renter, "--lease", "2", "--daily", "1", "--per-tx", "0.5", "--target", &shop.to_string(), "--rpc", r]);
+        cli(&[
+            "lease",
+            "wallet",
+            "--wallet",
+            &w_renter,
+            "--lease",
+            "2",
+            "--daily",
+            "1",
+            "--per-tx",
+            "0.5",
+            "--target",
+            &shop.to_string(),
+            "--rpc",
+            r,
+        ]);
         wait("the delegation on this node", 30, || {
             let r = chain.store().reader().unwrap();
-            queries::call(&StateView::latest(&r), 1337, renter.address(), ILimitedWallet::configCall {})
-                .is_ok_and(|c| c.lease == U256::from(2))
+            queries::call(
+                &StateView::latest(&r),
+                1337,
+                renter.address(),
+                ILimitedWallet::configCall {},
+            )
+            .is_ok_and(|c| c.lease == U256::from(2))
         });
         let key_c = rt_c.key(2);
         let pay = |value: u128| -> bool {
-            let calls = vec![ILimitedWallet::Call { to: shop, value: U256::from(value), data: Default::default() }];
+            let calls = vec![ILimitedWallet::Call {
+                to: shop,
+                value: U256::from(value),
+                data: Default::default(),
+            }];
             let cfg = view(&chain, renter.address(), ILimitedWallet::configCall {});
             let deadline = U256::from(u64::MAX);
-            let d = view(&chain, renter.address(), ILimitedWallet::executeDigestCall { calls: calls.clone(), nonce: cfg.nonce, deadline });
+            let d = view(
+                &chain,
+                renter.address(),
+                ILimitedWallet::executeDigestCall {
+                    calls: calls.clone(),
+                    nonce: cfg.nonce,
+                    deadline,
+                },
+            );
             let sig = key_c.sign_hash_sync(&d).unwrap();
-            let data = ILimitedWallet::executeSignedCall { calls, deadline, sig: sig.as_bytes().to_vec().into() }.abi_encode();
-            let ok = boltchain::wallet::send_tx(r, &admin, renter.address(), U256::ZERO, data.into()).is_ok();
+            let data = ILimitedWallet::executeSignedCall {
+                calls,
+                deadline,
+                sig: sig.as_bytes().to_vec().into(),
+            }
+            .abi_encode();
+            let ok =
+                boltchain::wallet::send_tx(r, &admin, renter.address(), U256::ZERO, data.into())
+                    .is_ok();
             // Let this node catch up with the node the transaction went to.
             std::thread::sleep(Duration::from_secs(2));
             ok
@@ -421,7 +660,8 @@ async fn agents_lease_attested_enclaves() {
         assert!(!pay(600 * milli), "over the per-transaction limit");
         assert!(pay(400 * milli));
         assert!(!pay(400 * milli), "over the daily limit");
-        let bal = boltchain::wallet::rpc(r, "eth_getBalance", serde_json::json!([shop, "latest"])).unwrap();
+        let bal = boltchain::wallet::rpc(r, "eth_getBalance", serde_json::json!([shop, "latest"]))
+            .unwrap();
         assert_eq!(bal.as_str().unwrap(), format!("0x{:x}", 800 * milli));
         drop(rt_c);
     })

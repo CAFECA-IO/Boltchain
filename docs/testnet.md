@@ -111,6 +111,30 @@ $B validator --genesis genesis/testnet.json --datadir ~/.boltchain-testnet/data2
 
 節點必須在第 2401 塊之前換上新版，否則會停在分叉前（fork id 不同）。
 
+## 硬分叉 `tee`（第 233401 塊，ADR 0011、ADR 0013）
+
+第 233401 塊（epoch 389 的第一塊，約 2026-10-16 12:20 UTC+8）安裝下列程式碼（固定的 bytecode，`contracts/forks/8018-tee`），原有狀態全部保留：
+
+| 位址 | 合約 | 內容 |
+| --- | --- | --- |
+| `0xB017…0006` | `ComputeMarket`（新版） | 中繼代送的接單與收據付中繼費、`acceptFor` / `deliverFor` 的新簽名格式、工作必須指定已登記的模型；儲存佈局與舊版相同（新的 `relays` 放在最後） |
+| `0xB017…0007` | `ModelRegistry` | 模型登記表 |
+| `0xB017…0008` | `ImageRegistry` | Agent 執行環境映像與量測值 |
+| `0xB017…0009` | `TeeCollateral` | Intel 附帶資料（信任根是 Intel SGX Root CA） |
+| `0xB017…000A` | `TdxVerifier` | TDX quote 鏈上驗證 |
+| `0xB017…000B` | `EnclaveLease` | TEE 租約 |
+| `0xB017…000C` | `LimitedWallet` | Agent 的限權錢包（EIP-7702 委派目標） |
+
+從那一塊起：
+
+- 新的工作要先有模型：`boltchain model register`，再 `boltchain job post --model <id>`；不指定執行者（`--provider` 省略）就是開放承接。
+- 節點可以加 `--relay-wallet <帳戶檔> --relay-min-fee 0.001`，替沒有 BOLT 的執行者與 enclave 代送交易並收中繼費。
+- 驗證小組開始審核 T2 機器（TPM）的證明。測試網上的驗證者要用 `--tpm-roots <目錄>` 提供 TPM 廠商根憑證，沒有提供就棄權。
+- `TeeCollateral` 是空的，需要任何人提交 Intel 的附帶資料：`boltchain collateral update --wallet <帳戶檔>`（從 Intel PCS 抓取）。TCB Info 一筆約 1,500 萬 gas。
+- 模擬機器（`enclave runtime --simulate`）只在開發鏈上有效，測試網上的 TDX 證明必須來自真實硬體。
+
+節點必須在第 233401 塊之前換上 r39 以後的版本，否則會停在分叉前（fork id 不同）。
+
 ## Uniswap v4
 
 測試網部署了 Uniswap v4（core 1.0.2、periphery 1.0.3、UniversalRouter 2.1.0；2026-09-26 在 v2 重新部署，第 720–761 塊），部署腳本與地址紀錄在 [`scripts/uniswap-v4`](../scripts/uniswap-v4)：

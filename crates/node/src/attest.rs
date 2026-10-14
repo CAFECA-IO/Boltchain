@@ -50,15 +50,17 @@ where
 {
     use alloy_sol_types::SolCall;
     let call = |to: Address, c: Vec<u8>| view(to, c);
-    let req = IEnclaveLease::requestCall::abi_decode_returns(
-        &call(LEASES, IEnclaveLease::requestCall { r: U256::from(id) }.abi_encode())?,
-    )?;
+    let req = IEnclaveLease::requestCall::abi_decode_returns(&call(
+        LEASES,
+        IEnclaveLease::requestCall { r: U256::from(id) }.abi_encode(),
+    )?)?;
     if req.state != 1 || req.epoch == 0 {
         return Ok(None);
     }
-    let machine = IEnclaveLease::machineCall::abi_decode_returns(
-        &call(LEASES, IEnclaveLease::machineCall { m: req.machine }.abi_encode())?,
-    )?;
+    let machine = IEnclaveLease::machineCall::abi_decode_returns(&call(
+        LEASES,
+        IEnclaveLease::machineCall { m: req.machine }.abi_encode(),
+    )?)?;
     let (expect, image) = if req.kind == REQ_MACHINE {
         let b = IEnclaveLease::machineBindingCall::abi_decode_returns(&call(
             LEASES,
@@ -66,13 +68,18 @@ where
         )?)?;
         (b, None)
     } else {
-        let lease = IEnclaveLease::leaseCall::abi_decode_returns(
-            &call(LEASES, IEnclaveLease::leaseCall { id: req.lease }.abi_encode())?,
-        )?;
+        let lease = IEnclaveLease::leaseCall::abi_decode_returns(&call(
+            LEASES,
+            IEnclaveLease::leaseCall { id: req.lease }.abi_encode(),
+        )?)?;
         let b = IEnclaveLease::enclaveBindingCall::abi_decode_returns(&call(
             LEASES,
-            IEnclaveLease::enclaveBindingCall { id: req.lease, signer: req.signer, encKey: req.encKey }
-                .abi_encode(),
+            IEnclaveLease::enclaveBindingCall {
+                id: req.lease,
+                signer: req.signer,
+                encKey: req.encKey,
+            }
+            .abi_encode(),
         )?)?;
         (tpm::activation_data(b, lease.agentHash), Some(lease.image))
     };
@@ -138,7 +145,8 @@ where
         Ok(c) => c,
         Err(e) => return refuse(&e.to_string()),
     };
-    let body = serde_json::json!({"blob": hex::encode(blob), "secret": hex::encode(enc)}).to_string();
+    let body =
+        serde_json::json!({"blob": hex::encode(blob), "secret": hex::encode(enc)}).to_string();
     let url = format!("{base}/attest/challenge");
     let answer = match http("POST", &url, Some(body.as_bytes()), ENDPOINT_TIMEOUT) {
         Ok((200, b)) => b,

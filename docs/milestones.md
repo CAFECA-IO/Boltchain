@@ -19,7 +19,7 @@
 
 必要條件：
 
-- [ ] 外部安全稽核：共識（HotStuff-2、BLS 聚合與延後驗證、檢查點）、系統合約（質押、罰沒、SwarmStorage、ComputeMarket）、分叉機制
+- [ ] 外部安全稽核：共識（HotStuff-2、BLS 聚合與延後驗證、檢查點）、系統合約（質押、罰沒、SwarmStorage、ComputeMarket、ModelRegistry、TEE 的五個合約與 `TeeLib` 的 DER / JSON 解析）、分叉機制
 - [ ] 測試網在 PoS 下連續 2–4 週未停鏈，期間有外部驗證者加入、快照同步、修剪與抽查正常（全體重啟停鏈已修正並有測試、gossip 重複警告已查明，2026-10-04）
 - [ ] 主網 genesis 定稿（依 ADR 0007，genesis 沒有驗證者與多簽、從 PoW 開始）：填入上線時間 `timestamp` 與最終 `extraData`、確認起始難度 2¹⁸ 與 T1/T2 門檻、bootstrap `node001`–`node009.cafeca.io` 架設並設好 DNS
 - [x] 金鑰保護：驗證者金鑰預設為 EIP-2335 keystore（通過 EIP-2335 測試向量）、錢包為 v3 keystore（與 eth-account 互通）；`keys encrypt` / `wallet encrypt` 轉換舊檔；主網拒絕未加密的驗證者金鑰；密碼取自 `BOLT_PASSWORD_FILE`、`BOLT_PASSWORD` 或終端機
@@ -32,7 +32,7 @@
 - [ ] 營運演練：監控與告警、備份、崩潰後重啟（全體同時重啟已有自動恢復與測試）、停鏈處理手冊
 - [ ] BOLT 發行的法律與法規確認（台灣及其他地區）
 
-上線後再做：零 BOLT 執行者中繼、開放承接與 `ModelRegistry`、TEE Agent 租用、公開 IPFS 橋接。
+上線後再做：公開 IPFS 橋接、TEE 的 `bolt-art` 映像與實機驗收。零 BOLT 執行者中繼、開放承接、`ModelRegistry` 與 TEE 租用的合約已在 2026-10-14 完成，放進主網 genesis（決定：與其上線後再硬分叉，不如從 genesis 就有）。
 
 ## M1 結果（2026-09-25）
 
@@ -393,16 +393,22 @@ M4 的 PoS 機制完整保留，用在階段 B 與階段 C；啟動期驗證者�
 - [ ] 以真實 CAFECA 帳戶在測試網付款（需要 Passkey，人工測試）
 - [ ] 延長保存的介面
 
-## TEE Agent 租用（ADR 0013）：已採納，未實作
+## TEE Agent 租用（ADR 0013）：第一期軟體完成
 
-決定（2026-09-26）：必須支援 DGX Spark、Intel AI PC、AMD AI PC（沒有機密 VM，新增 T2「量測開機裝置」等級，靠 TPM 與驗證小組）；接受驗證小組背書；公開機器 ID；檢查點每小時上鏈；LLM 呼叫外部 API；映像開放登記；同版本雙簽罰沒全部押金。
+決定（2026-09-26）：必須支援 DGX Spark、Intel AI PC、AMD AI PC（沒有機密 VM，新增 T2「量測開機裝置」等級，靠 TPM 與驗證小組）；接受驗證小組背書；公開機器 ID；檢查點每小時上鏈；LLM 呼叫外部 API；映像開放登記；同版本雙簽罰沒全部押金。決定（2026-10-14）：先做第一期的軟體部分，合約放進主網 genesis，測試網以硬分叉 `tee` 加入。
 
 - [ ] 第零期：三款裝置實機確認（TPM、量測開機、Boot Guard / PSB、記憶體加密、IOMMU）
-- [ ] 第一期：驗證小組裁決憑證 + TPM 驗證、`TdxVerifier`、`TeeCollateral`、`ImageRegistry`、`EnclaveLease`、`bolt-art`（x86-64 / arm64）、`bolt-attest`、限權錢包
+- [x] 合約：`ImageRegistry`、`TeeCollateral`、`TdxVerifier`、`EnclaveLease`、`LimitedWallet`（`0xB017…0008`–`000C`），Intel 真實附帶資料可上鏈驗證；開發鏈 genesis 信任模擬 PKI
+- [x] `bolt-attest`：TDX quote 與附帶資料（與合約結果一致）、TPM quote / 事件記錄 / EK 憑證鏈 / MakeCredential；模擬 Intel PKI 與軟體 TPM
+- [x] 驗證小組 TPM 背書：`AttestVote` / `AttestCert`、鏈驗證後 `recordAttestation`、`--tpm-roots`
+- [x] 命令列：`image`、`collateral`、`enclave`（含 `runtime --simulate`）、`lease`；中繼代送檢查點與啟用；瀏覽器「TEE 租用」頁
+- [x] 測試：合約、`bolt-attest`、端到端 `m8_tee`（中繼啟用、本機驗證與交付秘密、檢查點、回滾被拒、搬家、雙簽罰沒、T2 驗證小組、EIP-7702 限權錢包）
+- [x] 測試網硬分叉 `tee`：第 233401 塊（固定程式碼 `contracts/forks/8018-tee`）
+- [ ] `bolt-art` 映像（x86-64 / arm64，可重現建置）、真實 TDX 機器驗收、ECC EK、TCB Info 提交的 gas 優化（目前約 1,484 萬）
 - [ ] 第二期：保管小組、SEV-SNP
 - [ ] 第三期：GPU 機密運算
 
-## M7 AI 算力市場（ADR 0011）：進行中
+## M7 AI 算力市場（ADR 0011）：完成（待測試網實跑）
 
 決定（2026-09-26）：爭議由驗證小組處理；SwarmStorage 改用 bolt-vault WASM。發行分配與金絲雀任務已由 ADR 0012 取消。
 
@@ -412,9 +418,11 @@ M4 的 PoS 機制完整保留，用在階段 B 與階段 C；啟動期驗證者�
 - [x] 節點端：驗證小組的裁決憑證（`VerdictVote` / `VerdictCert`，BLS 聚合，放在 envelope 的 `audits` 清單）；鏈驗證（爭議仍待裁決、分派給該 epoch 的小組、超過 2/3）後呼叫 `recordVerdict`；公開測試網隨分叉 `swarm` 生效；判定介面 `Judge`、`--verifier-cmd`（外部程式從 `BOLT_*` 環境變數讀取工作、輸出 `fault` / `ok`）；整合測試 `m7_verdict`
 - [x] 驗證者加密金鑰（由 BLS 金鑰衍生、gossip 公布、`bolt_verifierKeys`）、`job share`（加入小組為收件人、委託者簽署的 `DisputeShare`）、`boltchain judge`（重跑比對 token 數與相似度）
 - [x] `boltchain provider register|run|status|collect`（OpenAI 相容後端：llama.cpp、Ollama、vLLM）、`boltchain job post|status|result|approve|dispute|share|refund|withdraw`；整合測試 `m7_compute`
-- [ ] 零 BOLT 執行者的中繼（`acceptFor` / `deliverFor` 代送）、開放任何執行者承接、瀏覽器頁面
-- [ ] 判定改用 logits 比對或 TEE
-- [ ] `ModelRegistry`
+- [x] 零 BOLT 執行者的中繼（`--relay-wallet`、`bolt_relay`；`acceptFor` / `deliverFor` 的中繼費從工作款項付）、開放任何執行者承接（`provider run --open`、`job post --wait` / `job watch` 分享輸入）、瀏覽器「AI 推論」頁（CAFECA 發出工作、瀏覽器內加解密）
+- [x] 判定改用 log-probability 比對（top-k 重疊、平均差距、分歧處的平手判斷；`job post --logprobs`）
+- [x] `ModelRegistry`（`0xB017…0007`）與 `boltchain model register|list|support`；`post` 要求模型已登記
+- [x] 主網 genesis 包含新版 `ComputeMarket` 與 `ModelRegistry`；測試網以硬分叉 `tee`（第 233401 塊）換上，儲存佈局相容
+- [ ] 在公開測試網以真實的 llama.cpp 跑一次完整流程；以真實 CAFECA 帳戶從瀏覽器發出工作
 
 ## M6 追加項目（ADR 0008）
 

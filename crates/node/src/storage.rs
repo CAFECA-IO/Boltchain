@@ -1147,7 +1147,8 @@ impl Storage {
         if st.attest_certified.contains(&vote.request) {
             return Ok(());
         }
-        let votes = st.attest_votes.entry((vote.epoch, vote.request, vote.ok, machine)).or_default();
+        let votes =
+            st.attest_votes.entry((vote.epoch, vote.request, vote.ok, machine)).or_default();
         votes.insert(vote.member, vote.clone());
         if votes.len() * 3 > panel.len() * 2 {
             let all: Vec<AttestVote> = votes.values().cloned().collect();
@@ -1188,7 +1189,8 @@ impl Storage {
                     .to_vec())
             };
             let Some(p) = crate::attest::pending(id, call)? else {
-                let r = view(&self.chain, LEASES, IEnclaveLease::requestCall { r: U256::from(id) })?;
+                let r =
+                    view(&self.chain, LEASES, IEnclaveLease::requestCall { r: U256::from(id) })?;
                 if advancing && r.state != 1 {
                     cursor = id + 1;
                 }
@@ -1198,11 +1200,14 @@ impl Storage {
             if self.state.lock().attest_certified.contains(&id) {
                 continue;
             }
-            let panel = view(&self.chain, LEASES, IEnclaveLease::panelCall { epoch: p.request.epoch })?;
+            let panel =
+                view(&self.chain, LEASES, IEnclaveLease::panelCall { epoch: p.request.epoch })?;
             let seats: Vec<(u16, usize)> = panel
                 .iter()
                 .enumerate()
-                .filter_map(|(m, v)| mine.get(v).filter(|k| **k != usize::MAX).map(|k| (m as u16, *k)))
+                .filter_map(|(m, v)| {
+                    mine.get(v).filter(|k| **k != usize::MAX).map(|k| (m as u16, *k))
+                })
                 .filter(|(m, _)| !self.state.lock().attested.contains(&(id, *m)))
                 .collect();
             if seats.is_empty()
@@ -1228,9 +1233,11 @@ impl Storage {
                 self.state.lock().attest_abstained.insert(id, Instant::now());
                 continue;
             };
-            let epoch = view(&self.chain, LEASES, IEnclaveLease::requestCall { r: U256::from(id) })?.epoch;
+            let epoch =
+                view(&self.chain, LEASES, IEnclaveLease::requestCall { r: U256::from(id) })?.epoch;
             for (m, k) in seats {
-                let vote = AttestVote::sign(&self.cfg.keys[k], chain_id, epoch, id, ok, machine.0, m);
+                let vote =
+                    AttestVote::sign(&self.cfg.keys[k], chain_id, epoch, id, ok, machine.0, m);
                 self.state.lock().attested.insert((id, m));
                 let _ = self.net.publish_storage(StorageMsg::Attest(vote.clone()).encode()).await;
                 self.add_attest_vote(vote)?;

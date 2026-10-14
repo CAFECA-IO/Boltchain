@@ -61,9 +61,41 @@ pub const TESTNET_SWARM_STORAGE: &[u8] =
 /// Activation of the testnet's `swarm` fork: the first block of an epoch (600-block epochs).
 pub const TESTNET_SWARM_ACTIVATION: u64 = 2_401;
 
-/// Activation of the testnet's `tee` fork (set when the release that carries it is cut; until
-/// then far in the future).
-pub const TESTNET_TEE_ACTIVATION: u64 = u64::MAX;
+/// Activation of the testnet's `tee` fork: the first block of epoch 389 (about 2026-10-16 12:20
+/// UTC+8).
+pub const TESTNET_TEE_ACTIVATION: u64 = 233_401;
+
+/// Runtime code installed by the testnet's `tee` fork. Pinned (never rebuilt): a node replaying
+/// the fork block must install exactly these bytes. None of these contracts writes storage in
+/// its constructor, and `ComputeMarket` keeps the layout of the genesis version (its new
+/// `relays` mapping is declared last), so installing code is all the fork does.
+pub mod testnet_tee {
+    #[allow(missing_docs)]
+    pub const COMPUTE_MARKET: &[u8] =
+        include_bytes!("../../../contracts/forks/8018-tee/ComputeMarket.bin");
+    #[allow(missing_docs)]
+    pub const MODEL_REGISTRY: &[u8] =
+        include_bytes!("../../../contracts/forks/8018-tee/ModelRegistry.bin");
+    #[allow(missing_docs)]
+    pub const IMAGE_REGISTRY: &[u8] =
+        include_bytes!("../../../contracts/forks/8018-tee/ImageRegistry.bin");
+    #[allow(missing_docs)]
+    pub const TEE_COLLATERAL: &[u8] =
+        include_bytes!("../../../contracts/forks/8018-tee/TeeCollateral.bin");
+    #[allow(missing_docs)]
+    pub const TDX_VERIFIER: &[u8] =
+        include_bytes!("../../../contracts/forks/8018-tee/TdxVerifier.bin");
+    #[allow(missing_docs)]
+    pub const ENCLAVE_LEASE: &[u8] =
+        include_bytes!("../../../contracts/forks/8018-tee/EnclaveLease.bin");
+    #[allow(missing_docs)]
+    pub const LIMITED_WALLET: &[u8] =
+        include_bytes!("../../../contracts/forks/8018-tee/LimitedWallet.bin");
+}
+
+const fn install(address: Address, code: &'static [u8]) -> IrregularChange {
+    IrregularChange { address, code: Some(code), storage: &[] }
+}
 
 const TESTNET_FORKS: &[Fork] = &[
     Fork {
@@ -75,7 +107,40 @@ const TESTNET_FORKS: &[Fork] = &[
             storage: &[],
         }],
     },
-    Fork { name: TEE, activation: TESTNET_TEE_ACTIVATION, changes: &[] },
+    Fork {
+        name: TEE,
+        activation: TESTNET_TEE_ACTIVATION,
+        changes: &[
+            install(
+                alloy_primitives::address!("0xB017000000000000000000000000000000000006"),
+                testnet_tee::COMPUTE_MARKET,
+            ),
+            install(
+                alloy_primitives::address!("0xB017000000000000000000000000000000000007"),
+                testnet_tee::MODEL_REGISTRY,
+            ),
+            install(
+                alloy_primitives::address!("0xB017000000000000000000000000000000000008"),
+                testnet_tee::IMAGE_REGISTRY,
+            ),
+            install(
+                alloy_primitives::address!("0xB017000000000000000000000000000000000009"),
+                testnet_tee::TEE_COLLATERAL,
+            ),
+            install(
+                alloy_primitives::address!("0xB01700000000000000000000000000000000000A"),
+                testnet_tee::TDX_VERIFIER,
+            ),
+            install(
+                alloy_primitives::address!("0xB01700000000000000000000000000000000000B"),
+                testnet_tee::ENCLAVE_LEASE,
+            ),
+            install(
+                alloy_primitives::address!("0xB01700000000000000000000000000000000000C"),
+                testnet_tee::LIMITED_WALLET,
+            ),
+        ],
+    },
 ];
 
 /// Hard forks of a chain, in activation order.

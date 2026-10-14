@@ -1189,7 +1189,8 @@ mod tests {
             let (s, ct, _) = ex.respond(&format!("GET {page} HTTP/1.1\r\n\r\n"), &[]).unwrap();
             assert_eq!((s, ct), (200, "text/html; charset=utf-8"), "{page}");
         }
-        let (s, ct, wasm) = ex.respond("GET /vault/bolt_vault_bg.wasm HTTP/1.1\r\n\r\n", &[]).unwrap();
+        let (s, ct, wasm) =
+            ex.respond("GET /vault/bolt_vault_bg.wasm HTTP/1.1\r\n\r\n", &[]).unwrap();
         assert_eq!((s, ct), (200, "application/wasm"));
         assert!(wasm.starts_with(b"\0asm"));
         let (_, v) = get(&ex, "/api/compute");

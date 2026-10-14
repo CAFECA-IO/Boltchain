@@ -1,6 +1,6 @@
 # ADR 0013：租用遠端 TEE 執行 AI Agent
 
-- 狀態：已採納（2026-09-26），尚未實作（分期見第 10 節）
+- 狀態：已採納（2026-09-26）；第一期的軟體部分已實作（2026-10-14，見文末實作紀錄），`bolt-art` 映像與實機確認未完成
 - 相關：ADR 0002（不加客製交易與預編譯）、ADR 0008（治理只靠硬分叉）、ADR 0009（儲存層與抽查）、ADR 0011（算力市場、bolt-vault）、ADR 0012（發行）、ADR 0014（SwarmStorage）
 
 ## 決定（2026-09-26）
@@ -303,3 +303,56 @@
 4. **第三期：本機推論**
    - GPU 機密運算（資料中心 GPU）；T2 裝置的本機推論另行評估
    - `ComputeMarket` 的 TEE 等級工作改用同一套證明
+
+## 實作紀錄：第一期軟體部分（2026-10-14）
+
+範圍（專案負責人決定）：合約、`bolt-attest`、驗證小組的 TPM 背書、`enclave` / `lease` 命令列，以模擬的 TDX quote 與軟體 TPM 測試；實機確認與 `bolt-art` 映像不在這次範圍。新合約放進主網 genesis，公開測試網以硬分叉 `tee` 加入。操作說明見 [`docs/tee.md`](../tee.md)。
+
+### 合約（系統合約，固定位址）
+
+| 位址 | 合約 | 內容 |
+| --- | --- | --- |
+| `0xB017…0008` | `ImageRegistry` | 開放登記映像（名稱、原始碼 CID、建置方式），登記者加入量測值（TDX、SNP、TPM 各自的格式），其他人宣告重現；`allows(image, kind, m)` |
+| `0xB017…0009` | `TeeCollateral` | Intel SGX Root CA 公鑰編譯在合約裡；任何人提交 CA 憑證、CRL（只接受較新的、撤銷只增不減）、TDX TCB Info v3（含 TDX 模組身分）與 TD_QE 身分（依評估編號與發布日期只接受較新的），合約驗證 Intel 簽章；`tdxStatus`、`qeStatus` 依 Intel 的演算法算出 TCB 等級。開發鏈的 genesis 可以換成模擬的根（`devTeeRoot`） |
+| `0xB017…000A` | `TdxVerifier` | DCAP quote v4（ECDSA-256）：證明金鑰簽章、QE 報告綁定、PCK 憑證鏈與撤銷、QE 報告簽章、SGX 擴充欄位、TCB 與 QE 狀態、附帶資料新鮮度（`nextUpdate` 後 14 天寬限）、拒絕 debug TD。DER / X.509 / CRL / PEM / JSON 解析都在 `TeeLib.sol` |
+| `0xB017…000B` | `EnclaveLease` | 機器登記（TDX 當場驗證；TPM 交給驗證小組）、報價、押金（解除綁定 14 天）、租約、啟用、檢查點、按小時付款、退出（24 小時通知）、搬家、重新檢查、雙簽罰沒、驗證小組的請求與結果 |
+| `0xB017…000C` | `LimitedWallet` | EIP-7702 委派目標：命名空間儲存、每日與單筆上限、目標白名單、租約現役 enclave 金鑰可直接或以簽名（meta-tx）執行、帳戶本身不受限、隨時撤銷 |
+
+**實作時的決定**
+
+- 證明綁定：登記機器時 REPORT_DATA / qualifyingData 為 `machineBinding(執行者)`；啟用時 TDX 為 `enclaveBinding ‖ Agent 包雜湊`，TPM 為 `keccak256(enclaveBinding ‖ Agent 包雜湊)`（qualifyingData 只放 32 bytes）。nonce 在建立與搬家時由 `prevrandao` 產生（原本設計用指定區塊的 blockhash；`prevrandao` 立即可用，啟用前也無法預先算出）。
+- 檢查點的簽名內容 `(chainId, EnclaveLease, 租約, 版本, 狀態根, CID 雜湊, 最近看到的 blockhash)`，`seenBlock` 必須在最近 256 塊內。每個檢查點與 TDX 啟用付租約的中繼費給代送者，所以 enclave 與執行者都不需要 BOLT。
+- 雙簽：兩份簽名可以是任何曾經在這份租約上現役的金鑰（記錄 `signerLease` 與 `signerMachine`），罰的是當時那台機器的執行者；押金（含解除綁定中）全部罰沒，一半給檢舉人，一半鎖在合約（燒掉）。
+- 搬家條件：租約等待中、已降級、執行者已宣告退出或被罰沒、機器列入黑名單，或 2 小時沒有檢查點。
+- 驗證小組：待審請求每一塊都交給當期小組（每個 epoch 第一筆請求時抽出，之後沿用），不必等 epoch 開始；1 天沒有結果的請求任何人都能讓它過期，啟用退回等待狀態可以重試。證明包不上鏈，只記 sha256，由小組成員向機器登記的端點取得（TPM 挑戰本來就要與機器互動）。
+- `ComputeMarket` 與 `EnclaveLease` 的押金分開記帳（規則相同：收入扣 20% 到 64 BOLT）。
+
+**gas（開發鏈測試）**：登記 TDX 機器約 560 萬、TDX 啟用約 555 萬；提交 Intel 的 CA 約 33 萬、PCK 平台 CRL 約 281 萬、真實的 TDX TCB Info（6 個等級）約 1,484 萬、QE 身分約 122 萬。TCB Info 接近 EIP-7825 的單筆上限 16,777,216，Intel 的等級再增加就需要優化 JSON 解析（例如只解析需要的欄位、或改成提交預先解析的結構加上原文雜湊）。
+
+### `bolt-attest`（`crates/attest`）
+
+- `tdx`：與 `TdxVerifier` 相同的步驟與結果（測試比對兩者的機器 ID、TCB 與 QE 狀態、PCK 序號、量測值）；`intel::Collateral` 與 `TeeCollateral` 相同的接受規則與 TCB 等級演算法。真實的 Intel 附帶資料放在 `fixtures/intel`（2026-10-14 取自 Intel PCS），鏈上與鏈下都驗證通過。
+- `tpm`：TPMS_ATTEST 與 TPMT_SIGNATURE、AK（ECC P-256，必須是 restricted、fixedTPM、fixedParent、sensitiveDataOrigin、sign）、TCG crypto-agile 事件記錄重播（含 StartupLocality）、EK 憑證鏈（RSA 或 ECDSA 簽章）、MakeCredential（RSA-OAEP 標籤 `IDENTITY`、KDFa、AES-128-CFB、HMAC）。目前只支援 RSA EK。
+- `sim`：模擬的 Intel PKI（根 CA → PCK 平台 CA → 帶 SGX 擴充欄位的 PCK 憑證；TCB 簽章憑證；CRL；TCB Info 與 QE 身分 JSON），名稱都是「Boltchain Simulated」；可以產生任意 TD 報告的 quote。`tpm_sim`：RSA-2048 EK（由模擬廠商 CA 簽發）、P-256 AK、量測開機、quote、ActivateCredential。開發鏈的 genesis 信任 `SimIntel::dev()` 的根，開發鏈的驗證者信任 `SimTpmCa::dev()`。
+
+### 節點與命令列
+
+- 驗證小組：`AttestVote` / `AttestCert`（網域 `boltchain/attest/v1`，內容為 epoch、請求、是否通過、機器 ID），與抽查、裁決憑證共用區塊的 `audits` 清單；鏈驗證請求仍在等待、指派給該 epoch 的小組、超過三分之二後呼叫 `recordAttestation`。`--tpm-roots <目錄>` 提供 TPM 廠商根憑證，沒有就棄權。
+- `boltchain image register|measure|reproduce|list`、`collateral update|show`（從 Intel PCS 抓取、讀目錄或提交模擬資料；鏈上已有或不夠新的文件會跳過）、`enclave register|offer|bond|activate|exit|machines|withdraw|runtime`、`lease offers|create|show|verify|deliver|terminate|migrate|top-up|recheck|wallet`。
+- `enclave runtime --simulate --kind tdx|tpm`：模擬的 Agent 執行環境，提供登記與啟用用的證明、證明包與 TPM 挑戰端點、接收秘密（bolt-vault）、定時送檢查點（經中繼或錢包），狀態保存在 `--state`（模擬封存）。
+- `lease verify` 在本機用 `bolt-attest` 驗證 quote，附帶資料直接向 Intel PCS 取得（不依賴鏈），並確認綁定、Agent 包、映像量測值與 TCB 要求。
+- 瀏覽器「TEE 租用」頁：信任根與附帶資料狀態、機器、租約、映像；租約與機器詳細頁。
+
+### 測試
+
+- 合約（`crates/system/src/tee_tests.rs`）：真實 Intel 附帶資料上鏈、模擬 quote 鏈上鏈下結果一致、租約完整流程與按小時付款、回滾被拒、搬家、平台降級、雙簽罰沒與黑名單、T2 經驗證小組、限權錢包上限。
+- `bolt-attest`：真實附帶資料、模擬 quote 的竄改與撤銷、TPM 證明的竄改、挑戰只能由正確的 TPM 解開。
+- 端到端（`crates/node/tests/m8_tee.rs`，3 節點 7 位驗證者）：以命令列完成上述流程，含經中繼啟用與檢查點、驗證小組實際取證明與挑戰模擬 TPM、EIP-7702 委派。
+
+### 尚未完成
+
+- 第零期實機確認，以及 `bolt-art` 映像（TDX 機密 VM、T2 開機映像，x86-64 / arm64，可重現建置）。
+- ECC EK；內建的 TPM 廠商根憑證清單；韌體黑名單。
+- 節點自動提交 Intel 附帶資料（目前用 `collateral update`，可以排程執行）。
+- SEV-SNP、保管小組、GPU 證明（第二、三期）。
+

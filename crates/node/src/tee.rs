@@ -9,9 +9,7 @@
 
 use crate::{
     relay::through_relay,
-    wallet::{
-        format_bolt, http, load_wallet, parse_bolt, rpc, send_delegated, send_tx,
-    },
+    wallet::{format_bolt, http, load_wallet, parse_bolt, rpc, send_delegated, send_tx},
 };
 use alloy_primitives::{Address, B256, Bytes, U256, hex, keccak256};
 use alloy_signer::SignerSync;
@@ -249,13 +247,9 @@ pub fn run_image(cmd: ImageCmd) -> Result<()> {
                 tpm::measurement_bytes(q.pcr_mask, &tpm::selected(&pcrs, q.pcr_mask))
             };
             let m = keccak256(&raw);
-            let data = IImageRegistry::addMeasurementCall {
-                id: image,
-                kind,
-                raw: raw.into(),
-                platform,
-            }
-            .abi_encode();
+            let data =
+                IImageRegistry::addMeasurementCall { id: image, kind, raw: raw.into(), platform }
+                    .abi_encode();
             send_tx(&url, &s, IMAGES, U256::ZERO, data.into())?;
             println!("image {image}: {} measurement {m} added", kind_name(kind));
         }
@@ -316,7 +310,12 @@ impl CollateralSet {
     /// The simulated PKI's collateral (development chains).
     pub fn simulated() -> Self {
         let c = SimIntel::dev().collateral();
-        Self { cas: c.cas, crls: c.crls, tcb_infos: vec![c.tcb_info], qe_identity: Some(c.qe_identity) }
+        Self {
+            cas: c.cas,
+            crls: c.crls,
+            tcb_infos: vec![c.tcb_info],
+            qe_identity: Some(c.qe_identity),
+        }
     }
 
     /// Reads files saved from Intel's PCS: `*.der` certificates and CRLs (told apart by
@@ -464,24 +463,38 @@ pub fn submit_collateral(url: &str, s: &PrivateKeySigner, set: &CollateralSet) -
     // CRLs from the root first (they may revoke a CA), then CAs, then the CAs' CRLs.
     let root = call(url, COLLATERAL, ITeeCollateral::rootCall {})?;
     // The CAs alone: a document's signer is the CA whose key verifies it.
-    let local = CollateralSet { cas: set.cas.clone(), ..Default::default() }.local((root.x.0, root.y.0), now);
+    let local = CollateralSet { cas: set.cas.clone(), ..Default::default() }
+        .local((root.x.0, root.y.0), now);
     for crl in &set.crls {
-        try_send("CRL".into(), ITeeCollateral::setCrlCall { der: crl.clone().into() }.abi_encode())?;
+        try_send(
+            "CRL".into(),
+            ITeeCollateral::setCrlCall { der: crl.clone().into() }.abi_encode(),
+        )?;
     }
     for ca in &set.cas {
         let c = bolt_attest::der::Cert::parse(ca)?;
         let have = call(url, COLLATERAL, ITeeCollateral::casCall { subject: c.subject })?;
         if have.x == B256::ZERO {
-            try_send("CA certificate".into(), ITeeCollateral::addCaCall { der: ca.clone().into() }.abi_encode())?;
+            try_send(
+                "CA certificate".into(),
+                ITeeCollateral::addCaCall { der: ca.clone().into() }.abi_encode(),
+            )?;
         }
     }
     for crl in &set.crls {
-        try_send("CRL".into(), ITeeCollateral::setCrlCall { der: crl.clone().into() }.abi_encode())?;
+        try_send(
+            "CRL".into(),
+            ITeeCollateral::setCrlCall { der: crl.clone().into() }.abi_encode(),
+        )?;
     }
     // The signer of a document is the CA whose key verifies it.
     let signer_of = |doc: &str, tcb: bool| -> Option<B256> {
         let mut c = local.clone();
-        if tcb { c.set_tcb_info(doc, now).ok().map(|(_, s)| s) } else { c.set_qe_identity(doc, now).ok() }
+        if tcb {
+            c.set_tcb_info(doc, now).ok().map(|(_, s)| s)
+        } else {
+            c.set_qe_identity(doc, now).ok()
+        }
     };
     for t in &set.tcb_infos {
         let Some(signer) = signer_of(t, true) else { continue };
@@ -561,8 +574,12 @@ pub fn run_collateral(cmd: CollateralCmd) -> Result<()> {
         CollateralCmd::Show { fmspc, rpc: url } => {
             let r = call(&url, COLLATERAL, ITeeCollateral::rootCall {})?;
             let intel = r.x.0 == bolt_attest::intel::INTEL_ROOT.0;
-            println!("root: {}", if intel { "Intel SGX Root CA" } else { "simulated (development chain)" });
-            let f: [u8; 6] = hex::decode(&fmspc)?.try_into().map_err(|_| anyhow::anyhow!("FMSPC is 6 bytes"))?;
+            println!(
+                "root: {}",
+                if intel { "Intel SGX Root CA" } else { "simulated (development chain)" }
+            );
+            let f: [u8; 6] =
+                hex::decode(&fmspc)?.try_into().map_err(|_| anyhow::anyhow!("FMSPC is 6 bytes"))?;
             let t = call(&url, COLLATERAL, ITeeCollateral::tcbInfoCall { fmspc: f.into() })?;
             if t.info.evaluation == 0 {
                 println!("TCB info for {fmspc}: none");
@@ -756,7 +773,10 @@ pub fn run_enclave(cmd: EnclaveCmd) -> Result<()> {
             }
             .abi_encode();
             send_tx(&url, &s, LEASES, U256::ZERO, data.into())?;
-            println!("machine {machine}: {price} BOLT/hour, {}", if unavailable { "not taking leases" } else { "available" });
+            println!(
+                "machine {machine}: {price} BOLT/hour, {}",
+                if unavailable { "not taking leases" } else { "available" }
+            );
         }
         EnclaveCmd::Bond { wallet, action, amount, rpc: url } => {
             let s = load_wallet(&wallet)?;
@@ -769,7 +789,11 @@ pub fn run_enclave(cmd: EnclaveCmd) -> Result<()> {
             };
             send_tx(&url, &s, LEASES, value, data.into())?;
             let o = call(&url, LEASES, IEnclaveLease::operatorsCall { operator: s.address() })?;
-            println!("bond {} BOLT, unbonding {} BOLT", format_bolt(o.bond), format_bolt(o.unbonding));
+            println!(
+                "bond {} BOLT, unbonding {} BOLT",
+                format_bolt(o.bond),
+                format_bolt(o.unbonding)
+            );
         }
         EnclaveCmd::Activate { lease, runtime, submit, rpc: url } => {
             let r = runtime_post(&runtime, "/lease/start", &json!({"lease": lease}))?;
@@ -831,10 +855,17 @@ fn print_machines(url: &str, offers_only: bool) -> Result<()> {
             mc.operator,
             format_bolt(o.bond),
             if mc.verified { "verified" } else { "awaiting the panel" },
-            if mc.kind == TDX && mc.verified { format!(", TCB {}", tcb_name(mc.tcbStatus)) } else { String::new() },
+            if mc.kind == TDX && mc.verified {
+                format!(", TCB {}", tcb_name(mc.tcbStatus))
+            } else {
+                String::new()
+            },
             if black { " — BLACKLISTED" } else { "" },
         );
-        println!("    machine id {} — {} active lease(s) — {}", mc.machineId, mc.leases, mc.endpoint);
+        println!(
+            "    machine id {} — {} active lease(s) — {}",
+            mc.machineId, mc.leases, mc.endpoint
+        );
     }
     if shown == 0 {
         println!("{}", if offers_only { "no machines on offer" } else { "no machines registered" });
@@ -843,7 +874,12 @@ fn print_machines(url: &str, offers_only: bool) -> Result<()> {
 }
 
 fn runtime_get(base: &str, path: &str) -> Result<Value> {
-    let (code, body) = http("GET", &format!("{}{path}", base.trim_end_matches('/')), None, Duration::from_secs(60))?;
+    let (code, body) = http(
+        "GET",
+        &format!("{}{path}", base.trim_end_matches('/')),
+        None,
+        Duration::from_secs(60),
+    )?;
     if code != 200 {
         bail!("runtime: HTTP {code}: {}", String::from_utf8_lossy(&body));
     }
@@ -989,7 +1025,11 @@ impl Runtime {
                 let b = call(
                     url,
                     LEASES,
-                    IEnclaveLease::enclaveBindingCall { id: U256::from(id), signer: key.address(), encKey: enc },
+                    IEnclaveLease::enclaveBindingCall {
+                        id: U256::from(id),
+                        signer: key.address(),
+                        encKey: enc,
+                    },
                 )?;
                 let att = self.attest(b, l.agentHash);
                 let prev = self.st.lock().leases.get(&id).map(|p| p.version).unwrap_or(0);
@@ -1081,7 +1121,8 @@ impl Runtime {
         let new_root = keccak256([hex::decode(root)?.as_slice(), &version.to_be_bytes()].concat());
         let cid = format!("sim-state:{id}:{version}:{new_root}").into_bytes();
         let head = rpc(url, "eth_blockNumber", json!([]))?;
-        let head = u64::from_str_radix(head.as_str().unwrap_or("0x0").trim_start_matches("0x"), 16)?;
+        let head =
+            u64::from_str_radix(head.as_str().unwrap_or("0x0").trim_start_matches("0x"), 16)?;
         let seen = head.saturating_sub(1);
         let blk = rpc(url, "eth_getBlockByNumber", json!([format!("0x{seen:x}"), false]))?;
         let seen_hash = hex32(blk["hash"].as_str().context("block hash")?)?;
@@ -1146,7 +1187,8 @@ fn run_runtime(a: RuntimeArgs) -> Result<()> {
         evidence: Mutex::new(HashMap::new()),
         st: Mutex::new(st),
     });
-    let listener = TcpListener::bind(&a.listen).with_context(|| format!("listening on {}", a.listen))?;
+    let listener =
+        TcpListener::bind(&a.listen).with_context(|| format!("listening on {}", a.listen))?;
     println!("simulated {} runtime listening on {}", kind_name(kind), a.listen);
     // Checkpoints.
     let cp = rt.clone();
@@ -1187,7 +1229,9 @@ fn serve(rt: &Runtime, mut s: TcpStream) -> Result<()> {
             let head = String::from_utf8_lossy(&buf[..p]).to_ascii_lowercase();
             let len = head
                 .lines()
-                .find_map(|l| l.strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0)))
+                .find_map(|l| {
+                    l.strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0))
+                })
                 .unwrap_or(0usize);
             break (p + 4, len);
         }
@@ -1206,7 +1250,8 @@ fn serve(rt: &Runtime, mut s: TcpStream) -> Result<()> {
     let mut first = head.lines().next().unwrap_or("").split_whitespace();
     let (method, path) = (first.next().unwrap_or(""), first.next().unwrap_or("/"));
     let body = &buf[head_end..(head_end + len).min(buf.len())];
-    let (code, out) = rt.handle(method, path, body).unwrap_or_else(|e| (400, format!("{e:#}").into_bytes()));
+    let (code, out) =
+        rt.handle(method, path, body).unwrap_or_else(|e| (400, format!("{e:#}").into_bytes()));
     write!(
         s,
         "HTTP/1.1 {code} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -1376,11 +1421,22 @@ pub enum LeaseCmd {
 pub fn run_lease(cmd: LeaseCmd) -> Result<()> {
     match cmd {
         LeaseCmd::Offers { rpc: url } => print_machines(&url, true)?,
-        LeaseCmd::Create { wallet, machine, image, agent, hours, min_tcb, min_bond, relay_fee, rpc: url } => {
+        LeaseCmd::Create {
+            wallet,
+            machine,
+            image,
+            agent,
+            hours,
+            min_tcb,
+            min_bond,
+            relay_fee,
+            rpc: url,
+        } => {
             let s = load_wallet(&wallet)?;
             let mc = call(&url, LEASES, IEnclaveLease::machineCall { m: machine })?;
             let fee = parse_bolt(&relay_fee)?;
-            let value = U256::from(mc.pricePerHour) * U256::from(hours) + fee * U256::from(hours + 2);
+            let value =
+                U256::from(mc.pricePerHour) * U256::from(hours) + fee * U256::from(hours + 2);
             let data = IEnclaveLease::createLeaseCall {
                 m: machine,
                 image,
@@ -1391,13 +1447,21 @@ pub fn run_lease(cmd: LeaseCmd) -> Result<()> {
             }
             .abi_encode();
             let hash = send_tx(&url, &s, LEASES, value, data.into())?;
-            let id = first_topic(&url, hash, "LeaseCreated(uint256,address,uint64,uint64,bytes32)")?;
-            println!("lease {id} created on machine {machine}: {} BOLT escrowed", format_bolt(value));
+            let id =
+                first_topic(&url, hash, "LeaseCreated(uint256,address,uint64,uint64,bytes32)")?;
+            println!(
+                "lease {id} created on machine {machine}: {} BOLT escrowed",
+                format_bolt(value)
+            );
             println!("the operator starts it with `boltchain enclave activate --lease {id}`");
         }
         LeaseCmd::Show { lease, rpc: url } => {
             let l = call(&url, LEASES, IEnclaveLease::leaseCall { id: U256::from(lease) })?;
-            println!("lease {lease}: {}{}", state::name(l.state), if l.degraded { " (degraded)" } else { "" });
+            println!(
+                "lease {lease}: {}{}",
+                state::name(l.state),
+                if l.degraded { " (degraded)" } else { "" }
+            );
             println!("  renter {} — machine {} — image {}", l.renter, l.machine, l.image);
             println!(
                 "  {} BOLT/hour — escrow {} BOLT — {} hour(s) paid — relay fee {} BOLT",
@@ -1410,7 +1474,12 @@ pub fn run_lease(cmd: LeaseCmd) -> Result<()> {
             if l.signer != Address::ZERO {
                 println!("  enclave key {} — encryption key {}", l.signer, l.encKey);
             }
-            println!("  checkpoint version {} — state {} — {}", l.version, l.stateRoot, String::from_utf8_lossy(&l.stateCid));
+            println!(
+                "  checkpoint version {} — state {} — {}",
+                l.version,
+                l.stateRoot,
+                String::from_utf8_lossy(&l.stateCid)
+            );
             if l.exitAt != 0 {
                 println!("  operator leaves at {}", l.exitAt);
             }
@@ -1456,13 +1525,18 @@ pub fn run_lease(cmd: LeaseCmd) -> Result<()> {
             let data = IEnclaveLease::terminateCall { id: U256::from(lease) }.abi_encode();
             send_tx(&url, &s, LEASES, U256::ZERO, data.into())?;
             let b = call(&url, LEASES, IEnclaveLease::balanceOfCall { account: s.address() })?;
-            println!("lease {lease} ended; {} BOLT to withdraw (`boltchain enclave withdraw`)", format_bolt(b));
+            println!(
+                "lease {lease} ended; {} BOLT to withdraw (`boltchain enclave withdraw`)",
+                format_bolt(b)
+            );
         }
         LeaseCmd::Migrate { wallet, lease, to, rpc: url } => {
             let s = load_wallet(&wallet)?;
             let data = IEnclaveLease::migrateCall { id: U256::from(lease), to }.abi_encode();
             send_tx(&url, &s, LEASES, U256::ZERO, data.into())?;
-            println!("lease {lease} moved to machine {to}; it activates when the new enclave attests");
+            println!(
+                "lease {lease} moved to machine {to}; it activates when the new enclave attests"
+            );
         }
         LeaseCmd::TopUp { wallet, lease, amount, rpc: url } => {
             let s = load_wallet(&wallet)?;
@@ -1475,7 +1549,14 @@ pub fn run_lease(cmd: LeaseCmd) -> Result<()> {
             let data = IEnclaveLease::recheckCall { id: U256::from(lease) }.abi_encode();
             send_tx(&url, &s, LEASES, U256::ZERO, data.into())?;
             let l = call(&url, LEASES, IEnclaveLease::leaseCall { id: U256::from(lease) })?;
-            println!("lease {lease}: {}", if l.degraded { "degraded — the renter may migrate" } else { "platform acceptable" });
+            println!(
+                "lease {lease}: {}",
+                if l.degraded {
+                    "degraded — the renter may migrate"
+                } else {
+                    "platform acceptable"
+                }
+            );
         }
         LeaseCmd::Wallet { wallet, lease, daily, per_tx, target, rpc: url } => {
             let s = load_wallet(&wallet)?;
@@ -1494,7 +1575,10 @@ pub fn run_lease(cmd: LeaseCmd) -> Result<()> {
             if lease == 0 {
                 println!("{}: the enclave's session key is revoked", s.address());
             } else {
-                println!("{}: lease {lease}'s enclave may spend {daily} BOLT a day, {per_tx} per transaction", s.address());
+                println!(
+                    "{}: lease {lease}'s enclave may spend {daily} BOLT a day, {per_tx} per transaction",
+                    s.address()
+                );
             }
         }
     }
@@ -1517,7 +1601,11 @@ fn verify_lease(
     let mc = call(url, LEASES, IEnclaveLease::machineCall { m: l.machine })?;
     let base = runtime.unwrap_or(mc.endpoint.clone());
     let r = runtime_get(&base, &format!("/lease/{lease}/attestation"))?;
-    let binding = call(url, LEASES, IEnclaveLease::enclaveBindingCall { id, signer: l.signer, encKey: l.encKey })?;
+    let binding = call(
+        url,
+        LEASES,
+        IEnclaveLease::enclaveBindingCall { id, signer: l.signer, encKey: l.encKey },
+    )?;
     if mc.kind == TDX {
         let quote = hex::decode(r["quote"].as_str().context("quote")?)?;
         let now = unix_now();
@@ -1528,7 +1616,10 @@ fn verify_lease(
         } else {
             // Which FMSPC: read it from the quote's PCK certificate.
             let fmspc = pck_fmspc(&quote)?;
-            (CollateralSet::fetch_intel(&[hex::encode_upper(fmspc)])?, bolt_attest::intel::INTEL_ROOT)
+            (
+                CollateralSet::fetch_intel(&[hex::encode_upper(fmspc)])?,
+                bolt_attest::intel::INTEL_ROOT,
+            )
         };
         let col = set.local(root, now);
         let v = tdx::verify(&quote, &col, now)?;
@@ -1541,19 +1632,32 @@ fn verify_lease(
         };
         println!("quote verifies: TCB {}, QE {}", tcb_name(v.tcb_status), tcb_name(v.qe_status));
         check(v.machine_id == mc.machineId, "the quote comes from the leased machine")?;
-        check(v.report.report_data[..32] == binding[..], "it binds this lease and the enclave keys")?;
+        check(
+            v.report.report_data[..32] == binding[..],
+            "it binds this lease and the enclave keys",
+        )?;
         check(v.report.report_data[32..] == l.agentHash[..], "it runs the agent package leased")?;
-        let allowed = call(url, IMAGES, IImageRegistry::allowsCall { id: l.image, kind: TDX, m: v.report.measurement() })?;
+        let allowed = call(
+            url,
+            IMAGES,
+            IImageRegistry::allowsCall { id: l.image, kind: TDX, m: v.report.measurement() },
+        )?;
         check(allowed, "its measurement is registered for the image")?;
         check(v.tcb_status <= l.minTcb, "its TCB is acceptable for the lease")?;
     } else {
         let ev = Evidence::from_bytes(&hex::decode(r["evidence"].as_str().context("evidence")?)?)?;
         let roots = crate::attest::tpm_roots(None, simulated)?;
         let a = tpm::appraise(&ev, &roots, unix_now())?;
-        if a.machine_id != mc.machineId || a.qualifying_data != tpm::activation_data(binding, l.agentHash).as_slice() {
+        if a.machine_id != mc.machineId
+            || a.qualifying_data != tpm::activation_data(binding, l.agentHash).as_slice()
+        {
             bail!("REFUSE: the evidence is not bound to this lease and machine");
         }
-        if !call(url, IMAGES, IImageRegistry::allowsCall { id: l.image, kind: TPM, m: a.measurement })? {
+        if !call(
+            url,
+            IMAGES,
+            IImageRegistry::allowsCall { id: l.image, kind: TPM, m: a.measurement },
+        )? {
             bail!("REFUSE: the measurement is not registered for the image");
         }
         println!("ok: TPM evidence (EK certificate, quote, event log) binds this lease and image");

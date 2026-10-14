@@ -58,7 +58,11 @@ fn intel_collateral_is_accepted_on_chain() {
         assert!(ok, "{what} reverted: {out}");
         gas.push((what.to_string(), used));
     };
-    run(&mut evm, "root CRL", ITeeCollateral::setCrlCall { der: fixture("root-ca-crl.der") }.abi_encode());
+    run(
+        &mut evm,
+        "root CRL",
+        ITeeCollateral::setCrlCall { der: fixture("root-ca-crl.der") }.abi_encode(),
+    );
     for ca in ["pck-platform-ca.der", "pck-processor-ca.der", "tcb-signing.der"] {
         run(&mut evm, ca, ITeeCollateral::addCaCall { der: fixture(ca) }.abi_encode());
     }
@@ -85,7 +89,9 @@ fn intel_collateral_is_accepted_on_chain() {
     }
     let info = evm.view(
         COLLATERAL,
-        ITeeCollateral::tcbInfoCall { fmspc: alloy_primitives::FixedBytes([0, 0x80, 0x6f, 5, 0, 0]) },
+        ITeeCollateral::tcbInfoCall {
+            fmspc: alloy_primitives::FixedBytes([0, 0x80, 0x6f, 5, 0, 0]),
+        },
     );
     assert_eq!(info.info.evaluation, 20);
     assert_eq!(info.levels.len(), 6);
@@ -138,11 +144,21 @@ fn tee() -> Tee {
     let c = sim.collateral();
     let mut signer = B256::ZERO;
     for ca in &c.cas {
-        evm.call(relayer, COLLATERAL, U256::ZERO, ITeeCollateral::addCaCall { der: ca.clone().into() });
+        evm.call(
+            relayer,
+            COLLATERAL,
+            U256::ZERO,
+            ITeeCollateral::addCaCall { der: ca.clone().into() },
+        );
         signer = col.add_ca(ca, LATER).unwrap();
     }
     for crl in &c.crls {
-        evm.call(relayer, COLLATERAL, U256::ZERO, ITeeCollateral::setCrlCall { der: crl.clone().into() });
+        evm.call(
+            relayer,
+            COLLATERAL,
+            U256::ZERO,
+            ITeeCollateral::setCrlCall { der: crl.clone().into() },
+        );
         col.add_crl(crl).unwrap();
     }
     evm.call(
@@ -156,7 +172,10 @@ fn tee() -> Tee {
         relayer,
         COLLATERAL,
         U256::ZERO,
-        ITeeCollateral::setQeIdentityCall { document: c.qe_identity.clone().into_bytes().into(), signer },
+        ITeeCollateral::setQeIdentityCall {
+            document: c.qe_identity.clone().into_bytes().into(),
+            signer,
+        },
     );
     col.set_qe_identity(&c.qe_identity, LATER).unwrap();
     // The runtime image and its TDX measurement.
@@ -248,8 +267,13 @@ impl Tee {
             self.relayer,
             LEASES,
             U256::ZERO,
-            IEnclaveLease::activateCall { id, signer: enclave.address(), encKey: enc, attestation: q }
-                .abi_encode(),
+            IEnclaveLease::activateCall {
+                id,
+                signer: enclave.address(),
+                encKey: enc,
+                attestation: q,
+            }
+            .abi_encode(),
         );
         if ok {
             println!("activate: {gas} gas");
@@ -257,7 +281,13 @@ impl Tee {
         ok
     }
 
-    fn signed(&mut self, id: U256, enclave: &PrivateKeySigner, version: u64, root: B256) -> IEnclaveLease::Signed {
+    fn signed(
+        &mut self,
+        id: U256,
+        enclave: &PrivateKeySigner,
+        version: u64,
+        root: B256,
+    ) -> IEnclaveLease::Signed {
         let cid = Bytes::from(format!("bafy-state-{version}-{root}").into_bytes());
         let seen = keccak256(b"0");
         let digest = self.evm.view(
@@ -279,7 +309,13 @@ impl Tee {
         }
     }
 
-    fn checkpoint(&mut self, id: U256, enclave: &PrivateKeySigner, version: u64, root: B256) -> bool {
+    fn checkpoint(
+        &mut self,
+        id: U256,
+        enclave: &PrivateKeySigner,
+        version: u64,
+        root: B256,
+    ) -> bool {
         let s = self.signed(id, enclave, version, root);
         let cid = Bytes::from(format!("bafy-state-{version}-{root}").into_bytes());
         self.evm.try_call(
@@ -317,10 +353,18 @@ fn simulated_quote_verifies_on_chain_as_off_chain() {
     assert_eq!(on.pckSerial, off.pck_serial);
     assert_eq!(on.pckIssuer, off.pck_issuer);
     assert_eq!(on.reportData.as_ref(), &off.report.report_data[..]);
-    assert_eq!(t.evm.view(TDX, ITdxVerifier::measurementOfCall { r: on }), off.report.measurement());
+    assert_eq!(
+        t.evm.view(TDX, ITdxVerifier::measurementOfCall { r: on }),
+        off.report.measurement()
+    );
     let mut bad = q.to_vec();
     bad[tdx::HEADER + 136] ^= 1; // MRTD
-    assert!(!t.evm.try_call(relayer, TDX, U256::ZERO, ITdxVerifier::verifyCall { quote: bad.into() }));
+    assert!(!t.evm.try_call(
+        relayer,
+        TDX,
+        U256::ZERO,
+        ITdxVerifier::verifyCall { quote: bad.into() }
+    ));
 }
 
 #[test]
@@ -379,7 +423,10 @@ fn a_lease_runs_checkpoints_and_pays_by_the_hour() {
     assert_eq!(l.version, 2);
     let paid = t.evm.view(LEASES, IEnclaveLease::balanceOfCall { account: operator });
     assert_eq!(paid, bolt(1) * U256::from(8) / U256::from(10));
-    assert_eq!(t.evm.view(LEASES, IEnclaveLease::operatorsCall { operator }).bond, bolt(1) / U256::from(5));
+    assert_eq!(
+        t.evm.view(LEASES, IEnclaveLease::operatorsCall { operator }).bond,
+        bolt(1) / U256::from(5)
+    );
 
     // Rollback: an older or equal version is refused; another key's checkpoint too.
     assert!(!t.checkpoint(id, &enclave, 2, B256::repeat_byte(3)));
@@ -539,7 +586,8 @@ fn t2_machines_are_verified_by_the_panel() {
     let a = tpm::appraise(&ev, &[ca.root_der()], LATER).unwrap();
     assert_eq!(a.qualifying_data, binding.as_slice());
     // …and the node records its certified result.
-    t.evm.system(LEASES, IEnclaveLease::assignAttestationsCall { epoch: 3, members: vec![0, 1, 2] });
+    t.evm
+        .system(LEASES, IEnclaveLease::assignAttestationsCall { epoch: 3, members: vec![0, 1, 2] });
     assert!(t.evm.system(
         LEASES,
         IEnclaveLease::recordAttestationCall { r: pending[0], ok: true, machineId: a.machine_id },
@@ -567,29 +615,45 @@ fn t2_machines_are_verified_by_the_panel() {
             platform: "simulated TPM".into(),
         },
     );
-    assert!(t.evm.view(IMAGES, IImageRegistry::allowsCall { id: image, kind: 3, m: a.measurement }));
+    assert!(
+        t.evm.view(IMAGES, IImageRegistry::allowsCall { id: image, kind: 3, m: a.measurement })
+    );
 
     let id = t.lease(m, bolt(10));
     let enclave = PrivateKeySigner::random();
     let enc = B256::repeat_byte(0xee);
-    let b = t.evm.view(LEASES, IEnclaveLease::enclaveBindingCall { id, signer: enclave.address(), encKey: enc });
+    let b = t.evm.view(
+        LEASES,
+        IEnclaveLease::enclaveBindingCall { id, signer: enclave.address(), encKey: enc },
+    );
     let ev = soft.evidence(tpm::DEFAULT_PCRS, tpm::activation_data(b, AGENT).as_slice());
     // Only the renter or the operator queues a T2 activation.
     assert!(!t.evm.try_call(
         t.relayer,
         LEASES,
         U256::ZERO,
-        IEnclaveLease::activateCall { id, signer: enclave.address(), encKey: enc, attestation: ev.digest().to_vec().into() },
+        IEnclaveLease::activateCall {
+            id,
+            signer: enclave.address(),
+            encKey: enc,
+            attestation: ev.digest().to_vec().into()
+        },
     ));
     t.evm.call(
         operator,
         LEASES,
         U256::ZERO,
-        IEnclaveLease::activateCall { id, signer: enclave.address(), encKey: enc, attestation: ev.digest().to_vec().into() },
+        IEnclaveLease::activateCall {
+            id,
+            signer: enclave.address(),
+            encKey: enc,
+            attestation: ev.digest().to_vec().into(),
+        },
     );
     assert_eq!(t.lease_view(id).state, 2);
     let r = t.evm.view(LEASES, IEnclaveLease::requestCountCall {});
-    t.evm.system(LEASES, IEnclaveLease::assignAttestationsCall { epoch: 4, members: vec![0, 1, 2] });
+    t.evm
+        .system(LEASES, IEnclaveLease::assignAttestationsCall { epoch: 4, members: vec![0, 1, 2] });
     // A result naming another machine is a rejection.
     assert!(t.evm.system(
         LEASES,
@@ -601,12 +665,22 @@ fn t2_machines_are_verified_by_the_panel() {
         operator,
         LEASES,
         U256::ZERO,
-        IEnclaveLease::activateCall { id, signer: enclave.address(), encKey: enc, attestation: ev.digest().to_vec().into() },
+        IEnclaveLease::activateCall {
+            id,
+            signer: enclave.address(),
+            encKey: enc,
+            attestation: ev.digest().to_vec().into(),
+        },
     );
-    t.evm.system(LEASES, IEnclaveLease::assignAttestationsCall { epoch: 5, members: vec![0, 1, 2] });
+    t.evm
+        .system(LEASES, IEnclaveLease::assignAttestationsCall { epoch: 5, members: vec![0, 1, 2] });
     assert!(t.evm.system(
         LEASES,
-        IEnclaveLease::recordAttestationCall { r: r + U256::from(1), ok: true, machineId: a.machine_id },
+        IEnclaveLease::recordAttestationCall {
+            r: r + U256::from(1),
+            ok: true,
+            machineId: a.machine_id
+        },
     ));
     assert_eq!(t.evm.view(LEASES, IEnclaveLease::activeSignerCall { id }), enclave.address());
     // Outsiders cannot record results.
@@ -650,7 +724,13 @@ fn the_limited_wallet_lets_the_enclave_spend_within_limits() {
     let pay = |to: Address, n: u64| ILimitedWallet::Call { to, value: bolt(n), data: Bytes::new() };
     let signed = |t: &mut Tee, calls: Vec<ILimitedWallet::Call>, who: &PrivateKeySigner| -> bool {
         let (_, _, _, _, nonce, _) = {
-            let c = crate::queries::call(&t.evm.db, t.evm.chain_id, owner, ILimitedWallet::configCall {}).unwrap();
+            let c = crate::queries::call(
+                &t.evm.db,
+                t.evm.chain_id,
+                owner,
+                ILimitedWallet::configCall {},
+            )
+            .unwrap();
             (c.lease, c.dailyLimit, c.perTxLimit, c.spentToday, c.nonce, c.targets)
         };
         let deadline = U256::from(t.evm.timestamp + 600);
@@ -667,7 +747,11 @@ fn the_limited_wallet_lets_the_enclave_spend_within_limits() {
             relayer,
             owner,
             U256::ZERO,
-            ILimitedWallet::executeSignedCall { calls, deadline, sig: sig.as_bytes().to_vec().into() },
+            ILimitedWallet::executeSignedCall {
+                calls,
+                deadline,
+                sig: sig.as_bytes().to_vec().into(),
+            },
         )
     };
     assert!(signed(&mut t, vec![pay(shop, 2)], &enclave));
@@ -682,7 +766,12 @@ fn the_limited_wallet_lets_the_enclave_spend_within_limits() {
     t.evm.timestamp += 86_400;
     assert!(signed(&mut t, vec![pay(shop, 1)], &enclave));
     // The owner is not limited; and when it revokes, the enclave is out.
-    t.evm.call(owner, owner, U256::ZERO, ILimitedWallet::executeCall { calls: vec![pay(elsewhere, 10)] });
+    t.evm.call(
+        owner,
+        owner,
+        U256::ZERO,
+        ILimitedWallet::executeCall { calls: vec![pay(elsewhere, 10)] },
+    );
     t.evm.call(owner, owner, U256::ZERO, ILimitedWallet::revokeCall {});
     assert!(!signed(&mut t, vec![pay(shop, 1)], &enclave));
     // Configured again: a lease that ends takes the key with it.
@@ -690,7 +779,12 @@ fn the_limited_wallet_lets_the_enclave_spend_within_limits() {
         owner,
         owner,
         U256::ZERO,
-        ILimitedWallet::configureCall { lease: id, dailyLimit: bolt(3).to::<u128>(), perTxLimit: bolt(2).to::<u128>(), targets: vec![shop] },
+        ILimitedWallet::configureCall {
+            lease: id,
+            dailyLimit: bolt(3).to::<u128>(),
+            perTxLimit: bolt(2).to::<u128>(),
+            targets: vec![shop],
+        },
     );
     assert!(signed(&mut t, vec![pay(shop, 1)], &enclave));
     let renter = t.renter;

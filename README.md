@@ -5,7 +5,7 @@
 Boltchain 是一條相容 EVM（Osaka）的公開鏈，區塊與資料都存放在 IPFS 上。除了一般的智能合約，鏈上內建兩個租賃市場：
 
 - **儲存租賃（SwarmStorage）**：付費請多個節點保存你的加密檔案，節點要持續接受抽查，保存失敗會被罰款並換人。
-- **算力租賃（ComputeMarket 與 TEE Agent 租用）**：付費請別人的機器跑 AI 推論，或長時間執行一個 AI Agent；執行者看不到內容，交付結果依規則結算。
+- **算力租賃（ComputeMarket 與 TEE Agent 租用）**：付費請別人的機器跑 AI 推論，或在經過證明的可信執行環境裡長時間執行一個 AI Agent；執行者看不到內容，交付結果依規則結算。
 
 兩個市場都讓「有機器、沒有 BOLT」的人也能加入：註冊可以只簽名、由別人代送；押金從收入中逐步累積，不必先付。
 
@@ -59,44 +59,57 @@ boltchain storage get --wallet me.json 0 --out report.pdf
 
 ### AI 推論工作：ComputeMarket
 
-> 狀態：**可在開發鏈上完整使用**（合約 `0xB017…0006`、命令列、驗證小組裁決）；零 BOLT 執行者的中繼服務、開放任何執行者承接尚未完成（ADR 0011）。
+> 狀態：**已實作**（ADR 0011）。開發鏈與主網從 genesis 就有；公開測試網在第 233401 塊的硬分叉 `tee` 換上新版。
 
-- 委託者存入託管款，指定執行者、模型與每千個 token 的單價；輸入輸出檔用 bolt-vault 加密，只有雙方看得到。
-- 執行者用任何 OpenAI 相容的後端（llama.cpp、Ollama、vLLM）執行，收入直接入帳；押金從收入中扣 20% 累積到 64 BOLT，接單上限 5 BOLT + 10 × 押金。
+- 委託者存入託管款，選模型（`ModelRegistry` 登記的權重、tokenizer、執行環境）與每千個 token 的單價；可以指定執行者，或開放任何執行者承接。
+- 輸入輸出用 bolt-vault 加密，只有委託者與承接的執行者讀得到。開放承接的工作先只加密給委託者自己，有人接單後委託者的監看程式把執行者加為收件人（不必重新上傳）。
+- **執行者不需要 BOLT**：登記、接單、交付都只簽名，由任何開了中繼的節點代送（`--relay-wallet`）；中繼費從工作款項裡付，登記費從第一筆收入償還。
+- 執行者用任何 OpenAI 相容的後端（llama.cpp、Ollama、vLLM）執行，結果附上每個 token 的 log-probability；收入先扣 20% 累積押金到 64 BOLT，接單上限 5 BOLT + 10 × 押金。
 - 樂觀結算：委託者核可，或爭議窗口過後任何人都能結算。
-- 爭議時付 1 BOLT 押金；驗證小組拿到委託者分享的檔案後在自己的後端重跑比對，三分之二同意後裁決寫上鏈。執行者錯了罰押金 10%，7 天沒有裁決視為執行者勝。
+- 爭議時付 1 BOLT 押金；驗證小組成員用自己的後端以貪婪解碼重跑，比對 token、top-k 重疊與 log-probability 差距（模型被換掉、輸出被竄改都會被抓到），三分之二同意後裁決寫上鏈。執行者錯了罰押金 10%，7 天沒有裁決視為執行者勝。
+- 瀏覽器的「AI 推論」頁列出模型、執行者與工作；有設定 CAFECA 錢包的節點可以直接在網頁上發出工作：提示在瀏覽器內加密（bolt-vault WASM），以 CAFECA 付款，結果也在瀏覽器內解密。
 
 ```sh
-# 執行者（節點要加 --rpc-storage）
-boltchain provider register --wallet me.json --node-key data/node.key
-boltchain provider run --wallet me.json --backend http://127.0.0.1:8080 --model 1=qwen2.5-7b
-# 委託者
-boltchain job post --wallet me.json --provider <地址> --model 1 --prompt "你好" --price-in 0.001 --price-out 0.002
-boltchain job result --wallet me.json <jobId>
+# 模型（任何人都能登記）
+boltchain model register --wallet me.json --name "Qwen2.5-7B-Instruct Q4_K_M" --weights <CID> --runtime "llama.cpp b4500" --parameters 7.6e9 --vram 6144
+# 執行者：零 BOLT，經中繼登記與交付
+boltchain provider register --wallet me.json --node-key data/node.key --relay http://<中繼節點>:8545
+boltchain provider run --wallet me.json --backend http://127.0.0.1:8080 --model 1=qwen2.5-7b --open --relay http://<中繼節點>:8545
+# 委託者：不指定執行者就是開放承接；--wait 會等結果並在有人接單時分享輸入
+boltchain job post --wallet me.json --model 1 --prompt "你好" --price-in 0.001 --price-out 0.002 --wait
 boltchain job approve --wallet me.json <jobId>        # 或 job dispute，小組指派後 job share
-# 驗證者：以重跑判定爭議
-boltchain validator ... --rpc-storage --verifier-cmd "boltchain judge --backend http://127.0.0.1:8080 --model 1=qwen2.5-7b"
+# 節點：中繼、驗證小組
+boltchain validator ... --rpc-storage --relay-wallet relay.json --relay-min-fee 0.001 \
+  --verifier-cmd "boltchain judge --backend http://127.0.0.1:8080 --model 1=qwen2.5-7b"
 ```
 
 ### 長時間執行 AI Agent：TEE 租用
 
-> 狀態：**設計已採納、尚未實作**（ADR 0013）。
+> 狀態：**第一期軟體已實作**（ADR 0013，操作見 [`docs/tee.md`](docs/tee.md)）：合約、鏈上 TDX 驗證、TPM 驗證小組、`bolt-attest`、命令列、瀏覽器頁面。開發鏈與主網從 genesis 就有；公開測試網在第 233401 塊啟用。真正的 Agent 執行環境映像（`bolt-art`）要等三款裝置實機確認後建置，現在可以用模擬執行環境（`enclave runtime --simulate`）在開發鏈上走完整流程。
 
 租用別人機器上的可信執行環境（TEE）執行你的 AI Agent：
 
-- 執行者看不到 Agent 的記憶、金鑰與對話，也改不了它的行為。
-- Agent 的狀態每小時加密備份到 SwarmStorage 並在鏈上登記版本號，可以隨時搬到另一台機器；執行者拿舊狀態重啟會被拒絕。
-- 按小時計費，依 enclave 簽名的檢查點付款；不運行就不付錢。
-- TEE 被攻破的證據（同一版本簽出兩份不同狀態）會讓執行者**失去全部押金**，機器列入黑名單。
+- 執行者看不到 Agent 的記憶、金鑰與對話，也改不了它的行為。租用者在交付秘密前自己在本機驗證證明（`lease verify`），秘密只加密給證明裡綁定的金鑰。
+- Agent 每小時送一次由 enclave 簽名的檢查點（狀態根與 CID、遞增的版本號），按小時計費；不運行就不付錢。執行者拿舊狀態重啟，版本號送不上鏈。
+- 可以搬到另一台機器，版本號延續；舊 enclave 的金鑰立刻失效。
+- TEE 被攻破的證據（同一版本簽出兩份不同狀態）會讓執行者**失去全部押金**（一半給檢舉人），機器列入黑名單。
+- Agent 的鏈上帳戶透過 EIP-7702 委派給限權錢包：每日與單筆上限、可互動的合約白名單，換 enclave 或結束租約時自動失效，租用者隨時可以撤銷。
 
 支援兩個信任等級，租約上標明：
 
 | 等級 | 硬體 | 證明的驗證 |
 | --- | --- | --- |
-| T1 機密 VM | Intel TDX、AMD SEV-SNP | TDX 用 Osaka 內建的 P-256 預編譯直接在鏈上驗證；SNP 由驗證小組背書 |
-| T2 量測開機裝置 | DGX Spark、Intel AI PC、AMD AI PC | 專用系統開機、TPM 量測，由驗證小組背書 |
+| T1 機密 VM | Intel TDX（AMD SEV-SNP 第二期） | Osaka 的 P-256 預編譯在鏈上驗證 DCAP quote、PCK 憑證鏈、撤銷清單、TCB 等級與 QE 身分（約 560 萬 gas）；Intel 的附帶資料任何人都能提交 |
+| T2 量測開機裝置 | DGX Spark、Intel AI PC、AMD AI PC | TPM quote、事件記錄重播、EK 憑證鏈與 TPM 挑戰，由驗證小組三分之二背書 |
 
 T2 裝置沒有機密 VM，對實體攻擊的防護比 T1 弱得多；三款裝置的支援程度還要實機確認。Agent 的 LLM 呼叫外部 API，所以 API 業者看得到提示內容。
+
+```sh
+boltchain enclave register --wallet op.json --runtime http://127.0.0.1:9100 --price 0.8   # 執行者
+boltchain lease create --wallet me.json --machine 1 --image 1 --agent agent.tar --hours 24  # 租用者
+boltchain enclave activate --lease 1 --relay http://<中繼節點>:8545
+boltchain lease verify 1 && boltchain lease deliver 1 --file api-key.txt
+```
 
 ## 為什麼能做到
 
@@ -117,25 +130,22 @@ T2 裝置沒有機密 VM，對實體攻擊的防護比 T1 弱得多；三款裝�
 | 儲存層：epoch 索引、狀態快照、檢查點同步、修剪、歷史抽查、IPFS 閘道 | 完成 |
 | 發行改制：固定區塊獎勵、未質押存儲提供者 | 完成 |
 | **SwarmStorage：付費保存使用者資料** | **完成**；測試網第 2401 塊啟用 |
-| **ComputeMarket：AI 推論市場** | **可用**：合約、`provider` / `job` 命令列、驗證小組重跑判定；中繼與開放承接待做 |
+| **ComputeMarket：AI 推論市場** | **完成**：零 BOLT 執行者中繼、開放承接、`ModelRegistry`、log-probability 判定、瀏覽器頁面（CAFECA 發出工作）；測試網第 233401 塊啟用 |
 | bolt-vault：加密分片格式（Rust 與 WASM） | 完成 |
 | 內建區塊鏈瀏覽器（繁中 / 英文） | 完成 |
 | 存證與託管證據驗證（瀏覽器 `/verify`，ADR 0015） | 完成 |
 | 存證證書：上傳檔案、CAFECA 付款、證書代碼與認證標章（ADR 0016） | 完成 |
 | 公開測試網（4 節點、8 位驗證者）、Uniswap v4 | 運行中 |
-| **TEE Agent 租用** | **已採納設計，未實作** |
+| **TEE Agent 租用** | **第一期軟體完成**：`EnclaveLease`、`TdxVerifier`、`TeeCollateral`、`ImageRegistry`、`LimitedWallet`、`bolt-attest`、TPM 驗證小組、`enclave` / `lease` / `image` / `collateral` 命令列、瀏覽器頁面；`bolt-art` 映像待實機確認 |
 
 ## 剩餘工作
 
 依重要性排序：
 
-1. **算力市場補完**（M7）
-   - 零 BOLT 執行者的中繼服務（`acceptFor` / `deliverFor` 代送）、開放任何執行者承接、瀏覽器頁面
-   - `ModelRegistry`；判定改用 logits 比對或 TEE
-   - 在公開測試網以真實的 llama.cpp 跑一次完整流程
+1. **算力市場上線驗證**（M7）：在公開測試網以真實的 llama.cpp 跑一次完整流程（含中繼、開放承接、爭議）；以真實 CAFECA 帳戶從瀏覽器發出工作
 2. **TEE Agent 租用**（ADR 0013）
-   - 第零期：DGX Spark、Intel AI PC、AMD AI PC 實機確認（TPM、量測開機、開機韌體保護、記憶體加密、IOMMU）
-   - 第一期：T2 的 TPM 驗證、`TdxVerifier` 與 `TeeCollateral`、`ImageRegistry`、`EnclaveLease`、Agent 執行環境映像（x86-64 / arm64）、限權錢包
+   - 第零期：DGX Spark、Intel AI PC、AMD AI PC 實機確認（TPM、量測開機、開機韌體保護、記憶體加密、IOMMU），收集 TPM 廠商根憑證
+   - 第一期剩餘：`bolt-art` Agent 執行環境映像（x86-64 / arm64，可重現建置）、ECC EK、TCB Info 提交的 gas 優化、在真實 TDX 機器上驗收
    - 第二期：保管小組（租用者離線也能自動搬家）、SEV-SNP；第三期：GPU 機密運算
 3. **SwarmStorage 補強**：刪除已結束委託的資料、依金額加權抽查、提供者拒收、副本分散到不同機器
 4. **網路與維運**（M6）：測試網觀察一週（含 PoS 轉換與外部節點）、Helia 停止送 want 的問題、修剪改成事件驅動、簽名發布與自動更新、可重現建置、樹莓派 7 天基準
@@ -207,7 +217,8 @@ crates/
   chain/       genesis 初始化、出塊與匯入、PoW 分叉選擇與重組
   txpool/      交易池
   rpc/         eth_* 與 bolt_* JSON-RPC
-  node/        `boltchain` 執行檔：mine、validator、follow、devnet、wallet、storage、keys、bench、history；儲存服務、閘道、瀏覽器
+  node/        `boltchain` 執行檔：mine、validator、follow、devnet、wallet、storage、keys、bench、history、provider、job、model、image、collateral、enclave、lease；儲存服務、中繼、驗證小組、閘道、瀏覽器
+  attest/      TEE 證明驗證：Intel TDX（DCAP quote 與附帶資料）、TPM 2.0（quote、事件記錄、EK、MakeCredential）；模擬的 Intel PKI 與軟體 TPM
   pow/         RandomBOLT（RandomX 變體）、header 封印、ASERT
   ipld/        IPLD 編碼、CAR、epoch 索引、快照與委託索引格式
   net/         libp2p、gossipsub、Bitswap 1.2.0、交易轉發、NAT 穿透
@@ -216,7 +227,8 @@ crates/
   system/      系統合約的編譯產物、genesis 部署、ABI、epoch hook、委員會抽籤、抽查任務
   vault/       bolt-vault 加密分片格式（Rust 與 WASM；js/file_operator.ts 是瀏覽器端的上傳下載）
   sim/         決定性模擬器
-contracts/     系統合約：StakingManager、ConsensusRegistry、RewardDistributor、SwarmStorage、ComputeMarket
+contracts/     系統合約：StakingManager、ConsensusRegistry、RewardDistributor、SwarmStorage、ComputeMarket、ModelRegistry、
+               ImageRegistry、TeeCollateral、TdxVerifier、EnclaveLease、LimitedWallet；contracts/forks 是測試網硬分叉的固定程式碼
 genesis/       genesis 檔（見 genesis/README.md）
 scripts/       statetest、IPFS 互通測試、Uniswap v4 部署
 third_party/   RandomX 原始碼（只改 Argon2 salt，見 randomx/BOLTCHAIN.md）

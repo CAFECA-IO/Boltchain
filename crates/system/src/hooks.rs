@@ -231,7 +231,11 @@ where
             bitmap: Bytes::copy_from_slice(&votes.bitmap),
         },
     )?;
-    if bolt_primitives::forks::active(exec.params().input.chain_id, bolt_primitives::forks::TEE, number) {
+    if bolt_primitives::forks::active(
+        exec.params().input.chain_id,
+        bolt_primitives::forks::TEE,
+        number,
+    ) {
         assign_attestations(exec, parent, rules.epoch_of(number))?;
     }
     if !rules.is_epoch_start(number) {
@@ -538,7 +542,11 @@ where
         sys(
             exec,
             LEASES,
-            IEnclaveLease::recordAttestationCall { r: U256::from(*request), ok: *ok, machineId: *machine },
+            IEnclaveLease::recordAttestationCall {
+                r: U256::from(*request),
+                ok: *ok,
+                machineId: *machine,
+            },
         )?;
     }
     for (job, fault) in &history.verdicts {

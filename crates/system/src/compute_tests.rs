@@ -475,3 +475,155 @@ fn jobs_name_a_registered_model() {
     let model = m.evm.view(MODELS, IModelRegistry::modelCall { id: 1 });
     assert_eq!((model.name.as_str(), model.vramMiB), ("test model", 8192));
 }
+
+/// The public testnet replaces ComputeMarket's code at its `tee` fork: providers, balances and
+/// jobs recorded by the genesis version read the same afterwards, a job taken before the fork
+/// settles after it, and the new functions work on top.
+#[test]
+fn the_testnet_tee_fork_keeps_compute_state() {
+    use bolt_primitives::forks::testnet_tee;
+    let g =
+        bolt_primitives::Genesis::from_json(include_str!("../../../genesis/testnet.json")).unwrap();
+    let mut evm = Evm::from_genesis(&g);
+    evm.timestamp = evm.timestamp.max(1_000_000);
+    let provider = Address::repeat_byte(0xb1);
+    let requester = Address::repeat_byte(0xb2);
+    evm.fund(provider, bolt(10_000));
+    evm.fund(requester, bolt(100_000));
+    // Under the genesis version: a provider and a job it took.
+    evm.call(
+        provider,
+        COMPUTE,
+        U256::ZERO,
+        IComputeMarket::registerCall {
+            encKey: B256::repeat_byte(0x11),
+            peerId: Bytes::from_static(b"p"),
+        },
+    );
+    let deadline = evm.timestamp + 3600;
+    let id = evm.call(
+        requester,
+        COMPUTE,
+        bolt(2_000),
+        IComputeMarket::postCall {
+            provider_: provider,
+            model: 9,
+            input: Bytes::from_static(b"in"),
+            priceIn: bolt(1).to::<u128>(),
+            priceOut: bolt(1).to::<u128>(),
+            maxIn: 1000,
+            maxOut: 1000,
+            deadline,
+            window: 600,
+            relayFee: 0,
+        },
+    );
+    evm.call(provider, COMPUTE, U256::ZERO, IComputeMarket::acceptCall { id });
+    evm.call(
+        provider,
+        COMPUTE,
+        U256::ZERO,
+        IComputeMarket::deliverCall {
+            id,
+            output: Bytes::from_static(b"out"),
+            tokensIn: 500,
+            tokensOut: 500,
+        },
+    );
+    let before = evm.view(COMPUTE, IComputeMarket::jobCall { id });
+    // The fork installs the new code (and the new registries next to it).
+    for c in bolt_primitives::forks::forks(8018).iter().find(|f| f.name == "tee").unwrap().changes {
+        evm.deploy_at(c.address, &Bytes::from_static(c.code.unwrap()));
+    }
+    assert_eq!(
+        evm.db.load_account(COMPUTE).unwrap().info.code.as_ref().unwrap().original_bytes(),
+        Bytes::from_static(testnet_tee::COMPUTE_MARKET)
+    );
+    let after = evm.view(COMPUTE, IComputeMarket::jobCall { id });
+    assert_eq!(
+        (after.requester, after.provider, after.state, after.escrow),
+        (before.requester, before.provider, before.state, before.escrow)
+    );
+    assert_eq!(
+        (after.input, after.output, after.tokensIn),
+        (before.input, before.output, before.tokensIn)
+    );
+    let p = evm.view(COMPUTE, IComputeMarket::providerCall { p: provider });
+    assert!(p.registered);
+    assert_eq!(evm.view(COMPUTE, IComputeMarket::relaysCall { id }).acceptRelayer, Address::ZERO);
+    // The pre-fork job settles under the new code.
+    evm.timestamp += 601;
+    evm.call(requester, COMPUTE, U256::ZERO, IComputeMarket::settleCall { id });
+    assert_eq!(evm.view(COMPUTE, IComputeMarket::jobCall { id }).state, 5);
+    // New jobs must name a registered model.
+    assert!(!evm.try_call(
+        requester,
+        COMPUTE,
+        bolt(10_000),
+        IComputeMarket::postCall {
+            provider_: provider,
+            model: 9,
+            input: Bytes::from_static(b"in"),
+            priceIn: 1,
+            priceOut: 1,
+            maxIn: 1,
+            maxOut: 1,
+            deadline: evm.timestamp + 3600,
+            window: 600,
+            relayFee: 0,
+        },
+    ));
+    let m = evm.call(
+        requester,
+        MODELS,
+        U256::ZERO,
+        IModelRegistry::registerCall {
+            name: "m".into(),
+            weights: Bytes::from_static(b"w"),
+            tokenizer: Bytes::new(),
+            runtime: "r".into(),
+            parameters: 1,
+            vramMiB: 1,
+        },
+    );
+    assert!(evm.try_call(
+        requester,
+        COMPUTE,
+        bolt(1),
+        IComputeMarket::postCall {
+            provider_: provider,
+            model: m,
+            input: Bytes::from_static(b"in"),
+            priceIn: 1,
+            priceOut: 1,
+            maxIn: 1,
+            maxOut: 1,
+            deadline: evm.timestamp + 3600,
+            window: 600,
+            relayFee: 0,
+        },
+    ));
+    // TEE contracts are live too (Intel's root: no simulated quotes here).
+    let r = evm.view(COLLATERAL, ITeeCollateral::rootCall {});
+    assert_eq!(r.x.0, bolt_attest::intel::INTEL_ROOT.0);
+    assert_eq!(evm.view(LEASES, IEnclaveLease::leaseCountCall {}), U256::ZERO);
+}
+
+/// Until the testnet's `tee` fork activates, the code it installs is today's build; once it has
+/// activated, the pinned bytes are fixed forever (replace this test with their hashes then).
+#[test]
+fn pinned_testnet_tee_code_is_current() {
+    use crate::artifacts as a;
+    use bolt_primitives::forks::testnet_tee as t;
+    for (pinned, built) in [
+        (t::COMPUTE_MARKET, a::compute_market()),
+        (t::MODEL_REGISTRY, a::model_registry()),
+        (t::IMAGE_REGISTRY, a::image_registry()),
+        (t::TEE_COLLATERAL, a::tee_collateral()),
+        (t::TDX_VERIFIER, a::tdx_verifier()),
+        (t::ENCLAVE_LEASE, a::enclave_lease()),
+        (t::LIMITED_WALLET, a::limited_wallet()),
+    ] {
+        assert_eq!(Bytes::from_static(pinned), built.deployed, "contracts/forks/8018-tee is stale");
+    }
+}

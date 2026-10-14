@@ -69,7 +69,9 @@ impl CryptoRng for SeedRng {}
 fn p256_key(seed: &[u8], label: &str) -> SigningKey {
     let mut ctr = 0u8;
     loop {
-        if let Ok(k) = SigningKey::from_slice(&sha256(&[b"boltchain/tpm-sim", seed, label.as_bytes(), &[ctr]])) {
+        if let Ok(k) =
+            SigningKey::from_slice(&sha256(&[b"boltchain/tpm-sim", seed, label.as_bytes(), &[ctr]]))
+        {
             return k;
         }
         ctr += 1;
@@ -145,8 +147,8 @@ impl SoftTpm {
     pub fn new(seed: &[u8], ca: &SimTpmCa) -> Self {
         let mut rng = SeedRng::new(&[b"ek/".as_slice(), seed].concat());
         let ek = RsaPrivateKey::new(&mut rng, 2048).expect("EK");
-        let ek_kp = KeyPair::try_from(ek.to_pkcs8_der().expect("pkcs8").as_bytes())
-            .expect("EK key pair");
+        let ek_kp =
+            KeyPair::try_from(ek.to_pkcs8_der().expect("pkcs8").as_bytes()).expect("EK key pair");
         let mut p = CertificateParams::default();
         p.distinguished_name = name("Boltchain Simulated EK");
         p.is_ca = IsCa::ExplicitNoCa;
@@ -154,7 +156,8 @@ impl SoftTpm {
         p.not_before = date_time_ymd(2020, 1, 1);
         p.not_after = date_time_ymd(2049, 12, 31);
         p.serial_number = Some(SerialNumber::from(sha256(&[seed])[..8].to_vec()));
-        let ek_cert = p.signed_by(&ek_kp, &ca.cert, &ca.key).expect("EK certificate").der().to_vec();
+        let ek_cert =
+            p.signed_by(&ek_kp, &ca.cert, &ca.key).expect("EK certificate").der().to_vec();
         let ak = p256_key(seed, "ak");
         let ak_public = EccPublic::new(AK_ATTRIBUTES | USER_WITH_AUTH, point(&ak));
         Self { ek, ek_cert, ak, ak_public, pcrs: [[0; 32]; 24], events: Vec::new(), clock: 0 }
@@ -233,7 +236,11 @@ impl SoftTpm {
     }
 
     /// ActivateCredential: recovers the secret of a challenge made for this TPM's EK and AK.
-    pub fn activate_credential(&self, blob: &[u8], encrypted_secret: &[u8]) -> Result<Vec<u8>, Error> {
+    pub fn activate_credential(
+        &self,
+        blob: &[u8],
+        encrypted_secret: &[u8],
+    ) -> Result<Vec<u8>, Error> {
         let n = u16::from_be_bytes(
             encrypted_secret.get(..2).ok_or(Error::Tpm("secret".into()))?.try_into().unwrap(),
         ) as usize;
