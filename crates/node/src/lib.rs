@@ -58,6 +58,7 @@ pub mod follow;
 pub mod gateway;
 pub mod keys;
 pub mod keystore;
+pub mod market;
 pub mod metrics;
 pub mod miner;
 pub mod p2p;

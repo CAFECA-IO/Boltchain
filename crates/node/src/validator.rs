@@ -1674,6 +1674,10 @@ pub async fn run(args: ValidatorArgs) -> Result<()> {
             chain: chain.clone(),
             pool: Some(pool.clone()),
             certs: certs.clone(),
+            host: Some(Arc::new(crate::storage::RpcHost {
+                storage: storage.clone(),
+                rt: tokio::runtime::Handle::current(),
+            })),
         };
         crate::explorer::start(addr, ex).await?;
     } else if let Some(addr) = args.storage.gateway {

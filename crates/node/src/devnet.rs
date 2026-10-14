@@ -94,6 +94,7 @@ pub async fn run(args: DevnetArgs) -> Result<()> {
             chain: chain.clone(),
             pool: Some(pool.clone()),
             certs: certs.clone(),
+            host: None,
         };
         crate::explorer::start(addr, ex).await?;
     }

@@ -211,6 +211,8 @@ footer.wrap { color: var(--muted); font-size: 12px; padding: 20px 16px 32px; bor
       <a href="/" data-nav="home" data-i18n="nav.home"></a>
       <a href="/blocks" data-nav="blocks" data-i18n="nav.blocks"></a>
       <a href="/validators" data-nav="validators" data-i18n="nav.validators"></a>
+      <a href="/compute" data-nav="compute" data-i18n="nav.compute"></a>
+      <a href="/tee" data-nav="tee" data-i18n="nav.tee"></a>
       <a href="/verify" data-nav="verify" data-i18n="nav.verify"></a>
     </nav>
     <form class="search" id="search">
@@ -232,7 +234,7 @@ footer.wrap { color: var(--muted); font-size: 12px; padding: 20px 16px 32px; bor
 const T = {
   "zh": {
     "hero.title": "Boltchain 區塊鏈瀏覽器", "hero.tag": "AI 算力與加密儲存的共享租賃鏈",
-    "nav.home": "首頁", "nav.blocks": "區塊", "nav.validators": "驗證者",
+    "nav.home": "首頁", "nav.blocks": "區塊", "nav.validators": "驗證者", "nav.compute": "AI 推論", "nav.tee": "TEE 租用",
     "search.ph": "搜尋區塊高度、區塊 / 交易雜湊、地址、CID", "search.go": "搜尋",
     "search.none": "找不到符合的資料", "loading": "載入中…", "error": "發生錯誤",
     "stat.height": "區塊高度", "stat.stage": "目前階段", "stat.blocktime": "平均出塊時間",
@@ -335,7 +337,7 @@ const T = {
   },
   "en": {
     "hero.title": "Boltchain Explorer", "hero.tag": "A shared rental chain for AI compute and encrypted storage",
-    "nav.home": "Home", "nav.blocks": "Blocks", "nav.validators": "Validators",
+    "nav.home": "Home", "nav.blocks": "Blocks", "nav.validators": "Validators", "nav.compute": "Inference", "nav.tee": "TEE",
     "search.ph": "Search block number, block / tx hash, address, CID", "search.go": "Search",
     "search.none": "Nothing matches", "loading": "Loading…", "error": "Something went wrong",
     "stat.height": "Block height", "stat.stage": "Phase", "stat.blocktime": "Avg block time",
@@ -1378,8 +1380,238 @@ function mesh(w, h, n, seed) {
   return `<svg class="mesh" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><g stroke="#3f6f86" stroke-width=".7" opacity=".7">${lines}</g><g fill="#7fd0c8">${dots}</g></svg>`;
 }
 const MESH = mesh(1100, 300, 120, 7);
+// ---------- markets: AI inference (ADR 0011) and TEE leases (ADR 0013) ----------
+const tr = (zh, en) => (lang === "zh" ? zh : en);
+const tcbName = (s) => ["—", "UpToDate", "SWHardeningNeeded", "ConfigurationNeeded", "ConfigurationAndSWHardeningNeeded", "OutOfDate", "OutOfDateConfigurationNeeded", "Revoked"][s] || "—";
+const jobBadge = (s) => `<span class="badge ${{ settled: "ok", delivered: "ok", disputed: "bad", refunded: "warn", open: "warn" }[s] || ""}">${esc({ open: tr("待承接", "open"), accepted: tr("執行中", "accepted"), delivered: tr("已交付", "delivered"), disputed: tr("爭議中", "disputed"), settled: tr("已結算", "settled"), refunded: tr("已退款", "refunded") }[s] || s)}</span>`;
+const leaseBadge = (l) => l.degraded ? `<span class="badge bad">${tr("已降級", "degraded")}</span>` : `<span class="badge ${{ active: "ok", pending: "warn", verifying: "warn" }[l.state] || ""}">${esc({ pending: tr("等待證明", "pending"), verifying: tr("驗證小組審核中", "verifying"), active: tr("運行中", "active"), ended: tr("已結束", "ended") }[l.state] || l.state)}</span>`;
+const kindName = (k) => (k === "tdx" ? "Intel TDX (T1)" : "TPM 2.0 (T2)");
+const perK = (w) => bolt(w, 6) + tr(" / 千 token", " / 1k tokens");
+
+async function pageCompute() {
+  const d = await api("compute");
+  if (!d.enabled) { $app.innerHTML = `<div class="empty">${tr("此鏈尚未啟用 AI 推論市場", "The inference market is not active on this chain")}</div>`; return; }
+  const cfg = await certConfig().catch(() => false);
+  $app.innerHTML = `<h1>${tr("AI 推論市場", "AI inference market")} <span class="badge">${num(d.jobCount)} ${tr("件工作", "jobs")}</span>${d.pendingDisputes ? ` <span class="badge bad">${d.pendingDisputes} ${tr("件爭議待審", "disputes pending")}</span>` : ""}</h1>
+    <p class="muted">${tr("提示與結果以 bolt-vault 加密，只有發出者與承接的執行者讀得到；執行者不需持有 BOLT（由中繼代送，手續費從工作扣）。", "Prompts and results are bolt-vault encrypted for the requester and the provider only; providers need no BOLT (relays submit for them, paid from the job).")}</p>
+    <div class="card" style="margin-bottom:16px"><div class="card-h"><h2>${tr("發出推論工作", "Post a job")}</h2></div><div class="cv-body" id="jpost">${cfg ? "" : `<div class="muted">${tr("此節點未設定 CAFECA 錢包；請用 <code>boltchain job post</code>。", "This node has no CAFECA wallet configured; use <code>boltchain job post</code>.")}</div>`}</div></div>
+    <div class="card" style="margin-bottom:16px"><div class="card-h"><h2>${tr("模型", "Models")}</h2></div>
+      ${d.models.length ? `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>${tr("名稱", "Name")}</th><th>${tr("參數", "Parameters")}</th><th>${tr("執行環境", "Runtime")}</th><th>${tr("權重", "Weights")}</th><th class="r">${tr("執行者", "Providers")}</th></tr></thead><tbody>
+      ${d.models.map((m) => `<tr><td>${m.id}</td><td>${esc(m.name)}</td><td>${(m.parameters / 1e9).toFixed(1)}B · ${num(m.vramMiB)} MiB</td><td>${esc(m.runtime)}</td><td class="mono">${esc(short(m.weights, 10, 6))}</td><td class="r">${m.providers}</td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty">${tr("尚無模型", "No models yet")}</div>`}</div>
+    <div class="card" style="margin-bottom:16px"><div class="card-h"><h2>${tr("執行者", "Providers")}</h2></div>
+      ${d.providers.length ? `<div class="scroll"><table class="tbl"><thead><tr><th>${tr("地址", "Address")}</th><th class="r">${tr("押金", "Bond")}</th><th class="r">${tr("完成", "Done")}</th><th class="r">${tr("過失", "Faults")}</th><th>${tr("狀態", "Status")}</th></tr></thead><tbody>
+      ${d.providers.map((p) => `<tr><td>${aLink(p.address)}</td><td class="r mono">${bolt(p.bond, 3)}</td><td class="r">${p.jobsDone}</td><td class="r">${p.faults}</td><td>${p.registered ? (p.exitEpoch ? `<span class="badge warn">${tr("退出中", "exiting")}</span>` : `<span class="badge ok">${tr("已登記", "registered")}</span>`) : "—"}</td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty">${tr("尚無執行者承接過工作", "No provider has taken a job yet")}</div>`}</div>
+    <div class="card"><div class="card-h"><h2>${tr("最近的工作", "Recent jobs")}</h2></div>${jobsTable(d.jobs)}</div>`;
+  if (cfg) renderPost(cfg, d);
+}
+function jobsTable(jobs) {
+  return jobs.length ? `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>${tr("狀態", "State")}</th><th>${tr("模型", "Model")}</th><th>${tr("發出者", "Requester")}</th><th>${tr("執行者", "Provider")}</th><th class="r">Tokens</th><th class="r">${tr("託管", "Escrow")}</th></tr></thead><tbody>
+    ${jobs.map((j) => `<tr><td><a href="/job/${j.id}">${j.id}</a></td><td>${jobBadge(j.state)}</td><td>${j.model}</td><td>${aLink(j.requester)}</td><td>${j.provider === "0x0000000000000000000000000000000000000000" ? `<span class="muted">${tr("開放承接", "open to all")}</span>` : aLink(j.provider)}</td><td class="r">${j.tokensIn || j.tokensOut ? `${num(j.tokensIn)} / ${num(j.tokensOut)}` : "—"}</td><td class="r mono">${bolt(j.escrow, 4)}</td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty">${tr("尚無工作", "No jobs yet")}</div>`;
+}
+
+// The requester's encryption key lives in this browser (per account): results are sealed to it.
+let vaultMod = null;
+async function vault() {
+  if (!vaultMod) { vaultMod = await import("/vault/bolt_vault.js"); await vaultMod.default(); }
+  return vaultMod;
+}
+const keyStore = {
+  get(acct) { try { const v = localStorage.getItem("compute.key." + acct.toLowerCase()); return v ? V.fromHex(v) : null; } catch (_) { return null; } },
+  set(acct, sk) { try { localStorage.setItem("compute.key." + acct.toLowerCase(), V.toHex(sk)); } catch (_) {} },
+};
+const jstate = { busy: false, status: "", channel: null };
+function renderPost(cfg, d) {
+  const box = document.getElementById("jpost");
+  if (!box) return;
+  const provs = d.providers.filter((p) => p.registered && !p.exitEpoch && p.encKey !== "0x" + "0".repeat(64));
+  box.innerHTML = `
+    <div class="grid two"><div>
+      <label>${tr("模型", "Model")}<select id="jmodel">${d.models.map((m) => `<option value="${m.id}">${m.id} · ${esc(m.name)}</option>`).join("")}</select></label>
+      <label>${tr("執行者", "Provider")}<select id="jprov">${provs.map((p) => `<option value="${p.address}">${short(p.address, 10, 8)} · ${p.jobsDone} ${tr("件完成", "done")}</option>`).join("")}</select></label>
+      <label>${tr("每千 token 價格（輸入 / 輸出, BOLT）", "Price per 1k tokens (in / out, BOLT)")}<span style="display:flex;gap:8px"><input id="jpin" value="0.01"><input id="jpout" value="0.03"></span></label>
+      <label>${tr("上限 token（輸入 / 輸出）", "Token limits (in / out)")}<span style="display:flex;gap:8px"><input id="jmin" value="2000"><input id="jmout" value="1000"></span></label>
+    </div><div>
+      <label>${tr("提示", "Prompt")}<textarea id="jprompt" rows="8" placeholder="${esc(tr("在瀏覽器內加密後才上傳", "Encrypted in your browser before upload"))}"></textarea></label>
+    </div></div>
+    <div style="margin-top:10px;display:flex;gap:10px;align-items:center"><button class="btn acc" id="jgo" ${jstate.busy || !d.models.length || !provs.length ? "disabled" : ""}>${tr("以 CAFECA 付款並發出", "Pay with CAFECA and post")}</button><span class="hint" id="jst">${esc(jstate.status || (provs.length ? "" : tr("目前沒有可指定的執行者（可用 CLI 發出開放工作）", "No provider to address yet (the CLI can post open jobs)")))}</span></div>
+    <div class="hint" style="margin-top:6px">${tr("解密金鑰保存在此瀏覽器；清除網站資料後就無法讀取結果。", "The decryption key stays in this browser; clearing site data loses access to results.")}</div>`;
+  const go = document.getElementById("jgo");
+  if (go) go.onclick = () => postJob(cfg, d);
+}
+function jsetStatus(s) { jstate.status = s; const el = document.getElementById("jst"); if (el) el.textContent = s; }
+async function postJob(cfg, d) {
+  if (jstate.busy) return;
+  jstate.busy = true;
+  const C = window.CafecaConnect || (await loadSdk(cfg.wallet).catch(() => null));
+  const val = (id) => document.getElementById(id).value.trim();
+  try {
+    if (!C) throw new Error("cannot load the CAFECA SDK");
+    if (!jstate.channel) jstate.channel = await getChannel(cfg);
+    if (!jstate.channel) {
+      jsetStatus(t("cv.s.signin"));
+      const cafeca = C.create({ wallet: cfg.wallet });
+      const nonce = V.toHex(crypto.getRandomValues(new Uint8Array(16))).slice(2);
+      const resp = await cafeca.signIn({ nonce, statement: tr("發出 AI 推論工作", "Post an AI inference job"), channel: { ttl: 30 * 86400 } });
+      jstate.channel = await cafeca.channel(resp);
+      try { localStorage.setItem("cafeca.channel", jstate.channel.id); } catch (_) {}
+    }
+    const acct = jstate.channel.account;
+    const vm = await vault();
+    let sk = keyStore.get(acct);
+    if (!sk) { const kp = vm.generateKeyPair(); sk = kp.secretKey; keyStore.set(acct, sk); }
+    const pk = vm.publicKeyOf(sk);
+    const provider = val("jprov");
+    const prov = d.providers.find((p) => p.address.toLowerCase() === provider.toLowerCase());
+    jsetStatus(tr("在瀏覽器內加密…", "Encrypting in the browser…"));
+    const body = JSON.stringify({ messages: [{ role: "user", content: val("jprompt") }], max_tokens: Number(val("jmout")) });
+    const sealed = vm.seal(V.utf8(body), "input.json", "application/json", [pk, V.fromHex(prov.encKey)]);
+    const blocks = [sealed.envelope, sealed.manifest, ...sealed.shards];
+    const host = await fetch("/api/compute/host", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root: sealed.envelope.cid, blocks: blocks.map((b) => [b.cid, V.toHex(b.bytes).slice(2)]) }) }).then((r) => r.json());
+    if (host.error) throw new Error(host.error);
+    const wei = (s) => { const [i, f = ""] = s.split("."); return BigInt(i || "0") * 10n ** 18n + BigInt((f + "0".repeat(18)).slice(0, 18)); };
+    const pin = wei(val("jpin")), pout = wei(val("jpout")), maxIn = BigInt(val("jmin")), maxOut = BigInt(val("jmout"));
+    const value = (maxIn * pin) / 1000n + (maxOut * pout) / 1000n;
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const enc = (sig, args) => { const s = V.parseSignature(sig); return V.toHex(V.concat(V.fromHex(s.selector), V.abiEncode(s.params.map((p) => p.type), args))); };
+    const calls = [];
+    const have = await api(`call?to=${d.contract}&data=${enc("encryptionKey(address)", [acct])}`).catch(() => null);
+    const mine = V.toHex(pk);
+    if (!have || String(have.result || have.output || "").toLowerCase() !== mine.toLowerCase()) {
+      calls.push({ to: d.contract, value: "0", data: enc("setEncryptionKey(bytes32)", [mine]) });
+    }
+    calls.push({ to: d.contract, value: value.toString(), data: enc("post(address,uint64,bytes,uint128,uint128,uint64,uint64,uint64,uint64,uint128)", [provider, BigInt(val("jmodel")), V.toHex(V.cidBytes(sealed.envelope.cid)), pin, pout, maxIn, maxOut, now + 3600n, 86400n, 0n]) });
+    jsetStatus(t("cv.s.pay"));
+    const r = await jstate.channel.sendCalls(calls, { title: tr("發出 AI 推論工作", "Post an AI inference job"), detail: `${tr("模型", "model")} ${val("jmodel")} · ${tr("託管", "escrow")} ${boltFmt(value)} BOLT` });
+    if (r && r.success === false) throw new Error("reverted");
+    jsetStatus(tr("已送出，等待上鏈…", "Sent; waiting for the block…"));
+    for (let i = 0; i < 60; i++) {
+      const c = await api(`compute?requester=${acct}&limit=1`).catch(() => null);
+      const j = c && c.jobs[0];
+      if (j && j.input === sealed.envelope.cid) { jstate.busy = false; jstate.status = ""; nav(`/job/${j.id}`); return; }
+      await new Promise((res) => setTimeout(res, 2000));
+    }
+    throw new Error("timeout");
+  } catch (e) {
+    if (e && e.code === "channel_closed") { jstate.channel = null; try { localStorage.removeItem("cafeca.channel"); } catch (_) {} }
+    jsetStatus(t("cv.s.fail", { e: (e && e.message) || e }));
+  } finally { jstate.busy = false; const g = document.getElementById("jgo"); if (g) g.disabled = false; }
+}
+/// Fetches and opens a bolt-vault file named by `cid` with this browser's key for `acct`.
+async function openSealed(cid, acct) {
+  const sk = keyStore.get(acct);
+  if (!sk) throw new Error(tr("此瀏覽器沒有這個帳戶的解密金鑰", "This browser holds no decryption key for this account"));
+  const vm = await vault();
+  const get = async (cids) => { const r = await api(`compute/blocks?cids=${cids.join(",")}&root=${cid}`); return r.blocks.map((h) => V.fromHex("0x" + h)); };
+  const [env] = await get([cid]);
+  const o = vm.openEnvelope(env, sk);
+  const [man] = await get([o.manifestCid]);
+  const m = vm.openManifest(env, man, o.contentKey);
+  const shards = [];
+  for (let i = 0; i < m.shards.length; i += 64) shards.push(...(await get(m.shards.slice(i, i + 64))));
+  return new TextDecoder().decode(vm.recover(m.json, o.contentKey, shards));
+}
+async function pageJob(id) {
+  const j = await api("compute/job/" + encodeURIComponent(id));
+  const zero = "0x0000000000000000000000000000000000000000";
+  $app.innerHTML = `<h1>${tr("推論工作", "Inference job")} #${j.id} ${jobBadge(j.state)}</h1>
+    <div class="card">${kv([
+      [tr("模型", "Model"), `${j.model}${j.modelName ? " · " + esc(j.modelName) : ""}`],
+      [tr("發出者", "Requester"), aLink(j.requester, j.requester)],
+      [tr("執行者", "Provider"), j.provider === zero ? tr("開放承接", "open to any provider") : aLink(j.provider, j.provider)],
+      [tr("價格", "Price"), `${perK(j.priceIn)} ${tr("輸入", "in")} · ${perK(j.priceOut)} ${tr("輸出", "out")}`],
+      [tr("Token（實際 / 上限）", "Tokens (used / max)"), `${num(j.tokensIn)} / ${num(j.maxIn)} ${tr("輸入", "in")} · ${num(j.tokensOut)} / ${num(j.maxOut)} ${tr("輸出", "out")}`],
+      [tr("託管", "Escrow"), bolt(j.escrow, 6)],
+      [tr("期限", "Deadline"), dateOf(j.deadline)],
+      j.deliveredAt && [tr("交付時間", "Delivered"), `${dateOf(j.deliveredAt)} · ${tr("爭議期", "dispute window")} ${Math.round(j.window / 3600)} h`],
+      [tr("加密輸入", "Encrypted input"), `<span class="mono break">${esc(j.input)}</span>`],
+      j.output && [tr("加密結果", "Encrypted result"), `<span class="mono break">${esc(j.output)}</span>`],
+      j.relays.acceptRelayer !== zero && [tr("承接中繼", "Acceptance relayed by"), `${aLink(j.relays.acceptRelayer)} · ${bolt(j.relays.acceptFee, 6)}`],
+      j.relays.deliverRelayer !== zero && [tr("交付中繼", "Receipt relayed by"), `${aLink(j.relays.deliverRelayer)} · ${bolt(j.relays.deliverFee, 6)}`],
+      j.dispute && [tr("爭議", "Dispute"), `${dateOf(j.dispute.openedAt)} · ${j.dispute.panelEpoch ? tr("驗證小組 epoch ", "panel of epoch ") + j.dispute.panelEpoch : tr("等待指派驗證小組", "waiting for a panel")}`],
+    ])}</div>
+    ${j.output ? `<div class="card" style="margin-top:16px"><div class="card-h"><h2>${tr("結果", "Result")}</h2><button class="btn" id="jread">${tr("在瀏覽器內解密", "Decrypt in this browser")}</button></div><div class="cv-body" id="jout"><div class="muted">${tr("只有發出者（用發出時的同一個瀏覽器）讀得到。", "Only the requester can read it (in the browser it posted from).")}</div></div></div>` : ""}`;
+  const b = document.getElementById("jread");
+  if (b) b.onclick = async () => {
+    const out = document.getElementById("jout");
+    out.textContent = t("loading");
+    try {
+      const txt = await openSealed(j.output, j.requester);
+      let content = txt;
+      try { const r = JSON.parse(txt); content = r.choices[0].message.content; } catch (_) {}
+      out.innerHTML = `<pre style="white-space:pre-wrap">${esc(content)}</pre>`;
+    } catch (e) { out.innerHTML = `<div class="err">${esc(e.message || e)}</div>`; }
+  };
+}
+
+async function pageTee() {
+  const d = await api("tee");
+  if (!d.enabled) { $app.innerHTML = `<div class="empty">${tr("此鏈尚未啟用 TEE 租用", "TEE leasing is not active on this chain")}</div>`; return; }
+  const sim = d.collateral.root === "simulated";
+  $app.innerHTML = `<h1>${tr("TEE Agent 租用", "TEE agent leases")} <span class="badge">${num(d.leaseCount)} ${tr("份租約", "leases")}</span>${d.pendingAttestations ? ` <span class="badge warn">${d.pendingAttestations} ${tr("件證明待驗證小組審核", "attestations awaiting the panel")}</span>` : ""}</h1>
+    <p class="muted">${tr("執行者出租已證明的機密運算環境（Intel TDX 鏈上驗證；TPM 量測開機由驗證小組背書），Agent 在裡面運行並每小時上鏈檢查點。", "Operators rent out attested confidential machines (Intel TDX verified on chain; TPM measured boot endorsed by the verifier panel); agents run inside and checkpoint on chain every hour.")}</p>
+    <div class="card" style="margin-bottom:16px">${kv([
+      [tr("信任根", "Trust anchor"), sim ? `<span class="badge warn">${tr("模擬 PKI（開發鏈）", "simulated PKI (development chain)")}</span>` : "Intel SGX Root CA"],
+      [tr("TD 報價飛地身分", "TD quoting enclave identity"), d.collateral.qeEvaluation ? `${tr("評估編號", "evaluation")} ${d.collateral.qeEvaluation} · ${tr("下次更新", "next update")} ${dateOf(d.collateral.qeNextUpdate)}` : `<span class="badge warn">${tr("尚未提交", "not submitted")}</span>`],
+      Number(d.burned) > 0 && [tr("已罰沒銷毀", "Slashed and burned"), bolt(d.burned, 4)],
+    ])}</div>
+    <div class="card" style="margin-bottom:16px"><div class="card-h"><h2>${tr("機器", "Machines")}</h2></div>
+      ${d.machines.length ? `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>${tr("類型", "Kind")}</th><th>${tr("規格", "Spec")}</th><th class="r">${tr("每小時", "Per hour")}</th><th class="r">${tr("押金", "Bond")}</th><th>${tr("狀態", "Status")}</th></tr></thead><tbody>
+      ${d.machines.map((m) => `<tr><td><a href="/machine/${m.id}">${m.id}</a></td><td>${kindName(m.kind)}</td><td>${m.cpus} ${tr("核", "cores")} · ${m.memGiB} GiB${m.gpu ? " · " + esc(m.gpu) : ""}</td><td class="r mono">${m.pricePerHour !== "0" ? bolt(m.pricePerHour, 3) : "—"}</td><td class="r mono">${bolt(m.bond, 2)}</td><td>${machineBadge(m)}</td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty">${tr("尚無機器", "No machines yet")}</div>`}</div>
+    <div class="card" style="margin-bottom:16px"><div class="card-h"><h2>${tr("最近的租約", "Recent leases")}</h2></div>${leasesTable(d.leases)}</div>
+    <div class="card"><div class="card-h"><h2>${tr("Runtime 映像", "Runtime images")}</h2></div>
+      ${d.images.length ? d.images.map((i) => `<div style="padding:10px 14px;border-top:1px solid var(--line)"><b>#${i.id} ${esc(i.name)}</b> <span class="muted">${tr("原始碼", "source")} ${esc(i.source)} · ${tr("登記者", "by")} ${aLink(i.registrant)}</span>${i.build ? `<div class="hint mono">${esc(i.build)}</div>` : ""}
+        ${i.measurements.map((m) => `<div class="hint"><span class="badge">${m.kind.toUpperCase()}</span> <span class="mono">${esc(short(m.hash, 12, 8))}</span> ${esc(m.platform)} · ${tr("獨立重現", "reproduced by")} ${m.reproductions}</div>`).join("")}</div>`).join("") : `<div class="empty">${tr("尚無映像", "No images yet")}</div>`}</div>`;
+}
+function machineBadge(m) {
+  if (m.blacklisted) return `<span class="badge bad">${tr("黑名單", "blacklisted")}</span>`;
+  if (!m.verified) return `<span class="badge warn">${tr("等待驗證小組", "awaiting the panel")}</span>`;
+  const tcb = m.kind === "tdx" ? ` <span class="badge ${m.tcbStatus === 1 ? "ok" : "warn"}">${tcbName(m.tcbStatus)}</span>` : "";
+  return (m.available ? `<span class="badge ok">${tr("出租中", "on offer")}</span>` : `<span class="badge">${tr("暫停", "paused")}</span>`) + tcb;
+}
+function leasesTable(ls) {
+  return ls.length ? `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>${tr("狀態", "State")}</th><th>${tr("機器", "Machine")}</th><th>${tr("租用者", "Renter")}</th><th class="r">${tr("檢查點版本", "Checkpoint")}</th><th class="r">${tr("已付時數", "Hours paid")}</th><th class="r">${tr("託管餘額", "Escrow left")}</th></tr></thead><tbody>
+    ${ls.map((l) => `<tr><td><a href="/lease/${l.id}">${l.id}</a></td><td>${leaseBadge(l)}</td><td><a href="/machine/${l.machine}">${l.machine}</a></td><td>${aLink(l.renter)}</td><td class="r">${l.version}</td><td class="r">${l.hoursPaid}</td><td class="r mono">${bolt(l.escrow, 3)}</td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty">${tr("尚無租約", "No leases yet")}</div>`;
+}
+async function pageLease(id) {
+  const l = await api("tee/lease/" + encodeURIComponent(id));
+  const zero = "0x0000000000000000000000000000000000000000";
+  $app.innerHTML = `<h1>${tr("租約", "Lease")} #${l.id} ${leaseBadge(l)}</h1>
+    <div class="card">${kv([
+      [tr("機器", "Machine"), `<a href="/machine/${l.machine}">#${l.machine}</a> · ${kindName(l.machineInfo.kind)} · ${aLink(l.machineInfo.operator)}`],
+      [tr("租用者", "Renter"), aLink(l.renter, l.renter)],
+      [tr("映像 / Agent 包", "Image / agent package"), `#${l.image} · <span class="mono">${esc(short(l.agentHash, 12, 8))}</span>`],
+      [tr("價格", "Price"), `${bolt(l.pricePerHour, 4)} / ${tr("小時", "hour")} · ${tr("已付", "paid")} ${l.hoursPaid} h · ${tr("託管餘額", "escrow left")} ${bolt(l.escrow, 4)}`],
+      [tr("要求", "Requires"), `TCB ≤ ${tcbName(l.minTcb)} · ${tr("押金", "bond")} ≥ ${bolt(l.minBond, 2)}`],
+      l.signer !== zero && [tr("現役 enclave 金鑰", "Active enclave key"), `<span class="mono break">${esc(l.signer)}</span>`],
+      l.signer !== zero && [tr("加密金鑰", "Encryption key"), `<span class="mono break">${esc(l.encKey)}</span>`],
+      l.activatedAt && [tr("啟用時間", "Activated"), dateOf(l.activatedAt)],
+      [tr("最新檢查點", "Latest checkpoint"), l.version ? `v${l.version} · ${ago(l.lastCheckpointAt)} · <span class="mono">${esc(short(l.stateRoot, 10, 8))}</span>` : "—"],
+      l.stateCid && [tr("狀態 CID", "State CID"), `<span class="mono break">${esc(l.stateCid)}</span>`],
+      l.exitAt && [tr("執行者退出", "Operator leaves"), dateOf(l.exitAt)],
+    ])}</div>
+    <div class="hint" style="margin-top:10px">${tr("交付秘密前請先在本機驗證：", "Verify locally before handing over secrets: ")}<code>boltchain lease verify ${l.id}</code></div>`;
+}
+async function pageMachine(id) {
+  const m = await api("tee/machine/" + encodeURIComponent(id));
+  $app.innerHTML = `<h1>${tr("機器", "Machine")} #${m.id} ${machineBadge(m)}</h1>
+    <div class="card">${kv([
+      [tr("類型", "Kind"), kindName(m.kind)],
+      [tr("機器 ID（公開）", "Machine ID (public)"), `<span class="mono break">${esc(m.machineId)}</span>`],
+      [tr("執行者", "Operator"), `${aLink(m.operator, m.operator)} · ${tr("押金", "bond")} ${bolt(m.bond, 4)}${m.slashedAt ? ` <span class="badge bad">${tr("已罰沒", "slashed")}</span>` : ""}`],
+      [tr("規格", "Spec"), `${m.cpus} ${tr("核", "cores")} · ${m.memGiB} GiB${m.gpu ? " · " + esc(m.gpu) : ""}`],
+      [tr("每小時價格", "Price per hour"), m.pricePerHour !== "0" ? bolt(m.pricePerHour, 4) : "—"],
+      [tr("端點", "Endpoint"), `<span class="mono">${esc(m.endpoint)}</span>`],
+      [tr("登記時間", "Registered"), dateOf(m.registeredAt)],
+    ])}</div>
+    <div class="card" style="margin-top:16px"><div class="card-h"><h2>${tr("租約", "Leases")}</h2></div>${leasesTable(m.leaseList)}</div>`;
+}
 // Clean URLs (/block/12, /tx/0x…): the server answers every page path with this file.
-const PAGES = new Set(["blocks", "block", "tx", "address", "validators", "validator", "epoch", "verify", "cert"]);
+const PAGES = new Set(["blocks", "block", "tx", "address", "validators", "validator", "epoch", "verify", "cert", "compute", "job", "tee", "lease", "machine"]);
 function nav(url) {
   history.pushState(null, "", url);
   route();
@@ -1388,7 +1620,7 @@ async function route() {
   clearInterval(timer);
   const [page, arg] = location.pathname.replace(/^\/+/, "").split("/").map(decodeURIComponent);
   const q = new URLSearchParams(location.search);
-  document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("on", a.dataset.nav === (page === "cert" ? "verify" : PAGES.has(page) ? page : "home")));
+  document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("on", a.dataset.nav === (page === "cert" ? "verify" : page === "job" ? "compute" : page === "lease" || page === "machine" ? "tee" : PAGES.has(page) ? page : "home")));
   document.body.classList.toggle("home", !PAGES.has(page));
   loading();
   try {
@@ -1401,6 +1633,11 @@ async function route() {
     else if (page === "epoch") await pageEpoch(arg);
     else if (page === "verify") q.get("mode") === "proof" ? pageVerify() : await pageRecords();
     else if (page === "cert") await pageCert(arg);
+    else if (page === "compute") await pageCompute();
+    else if (page === "job") await pageJob(arg);
+    else if (page === "tee") await pageTee();
+    else if (page === "lease") await pageLease(arg);
+    else if (page === "machine") await pageMachine(arg);
     else await pageHome();
     window.scrollTo(0, 0);
   } catch (e) { fail(e); }

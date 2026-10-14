@@ -23,6 +23,10 @@ use std::{collections::HashMap, sync::Arc};
 const INDEX_HTML: &str = include_str!("explorer/index.html");
 /// Evidence verification library (issue #1), used by the page and as its hashing Worker.
 const VERIFY_JS: &str = include_str!("explorer/verify.js");
+/// bolt-vault for the browser (`scripts/build-vault-wasm.sh`): compute jobs are sealed and
+/// opened in the page.
+const VAULT_JS: &str = include_str!("explorer/vault/bolt_vault.js");
+const VAULT_WASM: &[u8] = include_bytes!("explorer/vault/bolt_vault_bg.wasm");
 
 /// The page, with the library's URL versioned by its content (`/verify.js?v=<hash>`), so a
 /// cached old library is never used with a new page.
@@ -46,9 +50,11 @@ pub struct Explorer {
     pub pool: Option<Arc<TxPool>>,
     /// Evidence certificates (ADR 0016), when a `Certificates` contract is configured.
     pub certs: Option<Arc<crate::certificates::Certs>>,
+    /// Block hosting (the node's storage service), for compute jobs posted from the browser.
+    pub host: Option<Arc<dyn bolt_rpc::BlockHost>>,
 }
 
-type ApiResult = Result<Value, (u16, String)>;
+pub(crate) type ApiResult = Result<Value, (u16, String)>;
 
 fn json_response(res: ApiResult) -> Response {
     match res {
@@ -61,11 +67,11 @@ fn json_response(res: ApiResult) -> Response {
     }
 }
 
-fn not_found(what: impl Into<String>) -> (u16, String) {
+pub(crate) fn not_found(what: impl Into<String>) -> (u16, String) {
     (404, what.into())
 }
 
-fn internal(e: impl std::fmt::Display) -> (u16, String) {
+pub(crate) fn internal(e: impl std::fmt::Display) -> (u16, String) {
     (500, e.to_string())
 }
 
@@ -174,11 +180,18 @@ impl Explorer {
         if path == "/verify.js" {
             return Some((200, "text/javascript; charset=utf-8", VERIFY_JS.as_bytes().to_vec()));
         }
+        if path == "/vault/bolt_vault.js" {
+            return Some((200, "text/javascript; charset=utf-8", VAULT_JS.as_bytes().to_vec()));
+        }
+        if path == "/vault/bolt_vault_bg.wasm" {
+            return Some((200, "application/wasm", VAULT_WASM.to_vec()));
+        }
         let api = path.strip_prefix("/api/")?;
         if method == "POST" {
             let res = match api {
                 "upload" => self.upload(body),
                 "deal-index" => self.deal_index(body),
+                "compute/host" => self.compute_host(body),
                 _ => Err((405, "only GET is supported here".to_string())),
             };
             return Some(json_response(res));
@@ -204,6 +217,12 @@ impl Explorer {
             ["call"] => self.call(&r, query),
             ["cert", code] => self.certificate(&r, code),
             ["storage", "quote"] => self.quote(&r, query),
+            ["compute"] => self.compute(&r, query),
+            ["compute", "job", id] => self.compute_job(&r, id),
+            ["compute", "blocks"] => self.compute_blocks(query),
+            ["tee"] => self.tee(&r, query),
+            ["tee", "lease", id] => self.tee_lease(&r, id),
+            ["tee", "machine", id] => self.tee_machine(&r, id),
             _ => Err(not_found("unknown API path")),
         };
         Some(json_response(res))
@@ -991,7 +1010,8 @@ fn is_page(path: &str) -> bool {
     let (page, arg, rest) = (parts.next().unwrap_or(""), parts.next(), parts.next());
     rest.is_none()
         && match page {
-            "blocks" | "validators" | "verify" => arg.is_none_or(str::is_empty),
+            "blocks" | "validators" | "verify" | "compute" | "tee" => arg.is_none_or(str::is_empty),
+            "job" | "lease" | "machine" => arg.is_some_and(|a| !a.is_empty()),
             "block" | "tx" | "address" | "validator" | "epoch" | "cert" => {
                 arg.is_some_and(|a| !a.is_empty())
             }
@@ -1069,7 +1089,7 @@ mod tests {
             w.enable_address_index().unwrap();
             w.commit().unwrap();
         }
-        let ex = Explorer { chain, pool: None, certs: None };
+        let ex = Explorer { chain, pool: None, certs: None, host: None };
         let (s, v) = get(&ex, "/api/status");
         assert_eq!(s, 200);
         assert_eq!(v["chainId"], 1337);
@@ -1160,11 +1180,27 @@ mod tests {
             "/validator/3",
             "/epoch/4",
             "/verify",
+            "/compute",
+            "/job/3",
+            "/tee",
+            "/lease/1",
+            "/machine/2",
         ] {
             let (s, ct, _) = ex.respond(&format!("GET {page} HTTP/1.1\r\n\r\n"), &[]).unwrap();
             assert_eq!((s, ct), (200, "text/html; charset=utf-8"), "{page}");
         }
-        for other in ["/block", "/block/1/x", "/favicon.ico", "/blockz/1"] {
+        let (s, ct, wasm) = ex.respond("GET /vault/bolt_vault_bg.wasm HTTP/1.1\r\n\r\n", &[]).unwrap();
+        assert_eq!((s, ct), (200, "application/wasm"));
+        assert!(wasm.starts_with(b"\0asm"));
+        let (_, v) = get(&ex, "/api/compute");
+        assert_eq!(v["enabled"], true);
+        assert_eq!(v["jobCount"], 0);
+        let (_, v) = get(&ex, "/api/tee");
+        assert_eq!(v["enabled"], true);
+        assert_eq!(v["collateral"]["root"], "simulated");
+        assert_eq!(get(&ex, "/api/tee/lease/1").0, 404);
+        assert_eq!(get(&ex, "/api/compute/blocks?cids=x").0, 503, "no block host here");
+        for other in ["/block", "/block/1/x", "/favicon.ico", "/blockz/1", "/job"] {
             assert!(ex.respond(&format!("GET {other} HTTP/1.1\r\n\r\n"), &[]).is_none(), "{other}");
         }
     }
