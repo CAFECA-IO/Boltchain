@@ -37,7 +37,7 @@ MetaMask：新增網路。網路名稱填 `Boltchain Testnet`，RPC 填 `http://
 從原始碼編譯需要 Rust 1.95、cmake、clang（libclang）與 C++ 編譯器：
 
 ```sh
-git clone https://github.com/Luphia/Boltchain && cd Boltchain
+git clone https://github.com/CAFECA-IO/Boltchain && cd Boltchain
 cargo build --release -p boltchain
 ./target/release/boltchain genesis inspect genesis/testnet.json   # 區塊雜湊應與上表一致
 ```
