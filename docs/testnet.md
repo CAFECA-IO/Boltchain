@@ -159,6 +159,8 @@ $B validator --genesis genesis/testnet.json --datadir ~/.boltchain-testnet/data2
 
 ## 監看與回報
 
+- 瀏覽器的「網路」頁列出線上節點的版本與國家（r40 起；每個節點每 10 分鐘廣播一次心跳，舊版節點只在與瀏覽器節點直接連線時才會出現）。
+
 - 執行中的版本：`https://boltchain.cafeca.io/api/status` 的 `version`（如 `boltchain/v0.1.0-1a2b3c4`），或 `boltchain --version`。
 - `curl 127.0.0.1:9017/health`：高度、階段、peer 數、最終區塊、快照高度。
 - `curl 127.0.0.1:9017/metrics`：Prometheus 格式，包括匯入、重組、被拒提案、Bitswap、抽查、修剪等計數。

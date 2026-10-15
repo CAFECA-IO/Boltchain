@@ -542,7 +542,7 @@ mod tests {
         let chain = Arc::new(Chain::open(dir.join("chain"), &g).unwrap());
         let certs =
             Certs::new(CERTS, "https://cafeca.io".into(), None, Some(dir.join("uploads.json")));
-        Explorer { chain, pool: None, certs: Some(Arc::new(certs)), host: None }
+        Explorer { chain, pool: None, certs: Some(Arc::new(certs)), host: None, net: None }
     }
 
     fn age(ex: &Explorer, secs: u64) {

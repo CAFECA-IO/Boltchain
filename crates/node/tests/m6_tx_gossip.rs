@@ -64,6 +64,7 @@ async fn transactions_are_gossiped_to_every_pool() {
                 fork_id: chain.fork_id().unwrap().to_string(),
                 fork_check: None,
                 relay_server: false,
+                agent: String::new(),
             },
             Arc::new(ChainBlocks(chain.clone())),
         )

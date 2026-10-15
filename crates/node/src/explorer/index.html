@@ -57,7 +57,7 @@ h1 { font-size: 20px; margin: 4px 0 16px; display: flex; align-items: center; ga
 h2 { font-size: 15px; margin: 0; }
 .grid { display: grid; gap: 12px; }
 .grid > * { min-width: 0; }
-.stats { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin-bottom: 16px; }
+.stats { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 16px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
 .stat { padding: 14px 16px; }
 .stat .k { color: var(--muted); font-size: 12px; text-transform: none; }
@@ -201,6 +201,20 @@ footer.wrap { color: var(--muted); font-size: 12px; padding: 20px 16px 32px; bor
   .card { border: 1px solid #bbb; break-inside: avoid; }
   body { font-size: 12px; }
 }
+.globe-card { position: relative; overflow: hidden; background: radial-gradient(ellipse at 50% 40%, var(--accent-soft), transparent 70%), var(--panel); }
+#globe { display: block; width: 100%; height: 440px; cursor: grab; touch-action: none; }
+#globe:active { cursor: grabbing; }
+.globe-hint { position: absolute; left: 14px; bottom: 10px; font-size: 12px; color: var(--muted); }
+.cc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; padding: 14px; }
+.cc { text-align: left; border: 1px solid var(--line); background: var(--panel2); color: var(--text); border-radius: 10px; padding: 12px 14px; cursor: pointer; font: inherit; }
+.cc:hover:not(:disabled) { border-color: var(--accent); }
+.cc:disabled { cursor: default; }
+.cc-h { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.cc-f { font-size: 18px; } .cc-n { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .cc-c { font-size: 22px; font-weight: 600; }
+.cc-s { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; margin-top: 6px; }
+.ver-row { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.ver-h { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+@media (max-width: 560px) { #globe { height: 300px; } }
 </style>
 </head>
 <body>
@@ -211,6 +225,7 @@ footer.wrap { color: var(--muted); font-size: 12px; padding: 20px 16px 32px; bor
       <a href="/" data-nav="home" data-i18n="nav.home"></a>
       <a href="/blocks" data-nav="blocks" data-i18n="nav.blocks"></a>
       <a href="/validators" data-nav="validators" data-i18n="nav.validators"></a>
+      <a href="/network" data-nav="network" data-i18n="nav.network"></a>
       <a href="/compute" data-nav="compute" data-i18n="nav.compute"></a>
       <a href="/tee" data-nav="tee" data-i18n="nav.tee"></a>
       <a href="/verify" data-nav="verify" data-i18n="nav.verify"></a>
@@ -234,7 +249,7 @@ footer.wrap { color: var(--muted); font-size: 12px; padding: 20px 16px 32px; bor
 const T = {
   "zh": {
     "hero.title": "Boltchain 區塊鏈瀏覽器", "hero.tag": "AI 算力與加密儲存的共享租賃鏈",
-    "nav.home": "首頁", "nav.blocks": "區塊", "nav.validators": "驗證者", "nav.compute": "AI 推論", "nav.tee": "TEE 租用",
+    "nav.home": "首頁", "nav.blocks": "區塊", "nav.validators": "驗證者", "nav.network": "網路", "nav.compute": "AI 推論", "nav.tee": "TEE 租用",
     "search.ph": "搜尋區塊高度、區塊 / 交易雜湊、地址、CID", "search.go": "搜尋",
     "search.none": "找不到符合的資料", "loading": "載入中…", "error": "發生錯誤",
     "stat.height": "區塊高度", "stat.stage": "目前階段", "stat.blocktime": "平均出塊時間",
@@ -337,7 +352,7 @@ const T = {
   },
   "en": {
     "hero.title": "Boltchain Explorer", "hero.tag": "A shared rental chain for AI compute and encrypted storage",
-    "nav.home": "Home", "nav.blocks": "Blocks", "nav.validators": "Validators", "nav.compute": "Inference", "nav.tee": "TEE",
+    "nav.home": "Home", "nav.blocks": "Blocks", "nav.validators": "Validators", "nav.network": "Network", "nav.compute": "Inference", "nav.tee": "TEE",
     "search.ph": "Search block number, block / tx hash, address, CID", "search.go": "Search",
     "search.none": "Nothing matches", "loading": "Loading…", "error": "Something went wrong",
     "stat.height": "Block height", "stat.stage": "Phase", "stat.blocktime": "Avg block time",
@@ -565,7 +580,7 @@ function txRow(x) {
 }
 async function pageHome() {
   const draw = async () => {
-    const [s, bl, tx] = await Promise.all([api("status"), api("blocks?limit=8"), api("txs?limit=8")]);
+    const [s, bl, tx, nd] = await Promise.all([api("status"), api("blocks?limit=8"), api("txs?limit=8"), nodesCensus().catch(() => null)]);
     document.getElementById("net").textContent = s.chainId === 8017 ? "Mainnet" : s.chainId === 8018 ? "Testnet" : "Chain " + s.chainId;
     const stats = [
       [t("stat.height"), num(s.head.number), `${t("stat.finalized")} ${num(s.finalized)}`],
@@ -574,9 +589,10 @@ async function pageHome() {
       s.stage === "pos" ? [t("stat.validators"), num(s.validators), bolt(s.totalStake, 0) + " " + t("stat.staked")]
         : [t("stat.hashrate"), hashrate(s.hashrate), `${t("k.difficulty")} ${num(s.difficulty)}`],
       [t("stat.supply"), bolt(s.supply, 0), `${t("k.basefee")} ${gwei(s.baseFee)}`],
-      s.stage === "pos" ? [t("peers"), num(s.peers), `${num(s.pending)} ${t("pendingtx")}`]
+      s.stage === "pos" ? (nd && nd.enabled ? null : [t("peers"), num(s.peers), `${num(s.pending)} ${t("pendingtx")}`])
         : [t("stat.validators"), num(s.validators), bolt(s.totalStake, 0) + " " + t("stat.staked")],
-    ];
+      nd && nd.enabled && [`<a href="/network">${tr("網路節點", "Nodes online")} ›</a>`, num(nd.total), `${num(nd.countries.filter((c) => c.country).length)} ${tr("個國家 / 地區", "countries")} · ${num(s.peers)} ${t("peers")}`],
+    ].filter(Boolean);
     const keep = document.getElementById("hq");
     const typed = keep ? keep.value : "";
     $app.innerHTML = `<section class="hero">${MESH}<div class="in"><h1>${t("hero.title")}</h1><p>${t("hero.tag")}</p>
@@ -687,10 +703,12 @@ async function pageAddress(a, q) {
     <div class="pager">${before ? `<button class="btn" onclick="history.back()">‹ ${t("prev")}</button>` : ""}${d.next ? `<button class="btn" onclick="nav('/address/${d.address}?before=${d.next}'">${t("next")} ›</button>` : ""}</div></div>`;
 }
 async function pageValidators() {
-  const d = await api("validators");
+  const [d, nd] = await Promise.all([api("validators"), nodesCensus().catch(() => null)]);
+  const ver = {};
+  ((nd && nd.nodes) || []).forEach((n) => (ver[n.peer] = n.version));
   $app.innerHTML = `<h1>${t("v.list")} <span class="badge">${num(d.validators.length)}</span> <span class="muted" style="font-size:14px;font-weight:400">${t("epoch")} ${num(d.epoch)}</span></h1>
-    <div class="card scroll">${d.validators.length ? `<table class="tbl"><thead><tr><th>${t("v.id")}</th><th>${t("v.status")}</th><th>${t("v.owner")}</th><th class="r">${t("v.stake")}</th><th class="r">${t("v.seats")}</th><th class="r">${t("v.rewards")}</th><th>${t("v.peer")}</th></tr></thead><tbody>
-      ${d.validators.map((v) => `<tr><td><a href="/validator/${v.id}">#${v.id}</a></td><td>${statusBadge(v.status)}</td><td>${aLink(v.owner)}</td><td class="r mono">${bolt(v.stake, 2)}</td><td class="r">${v.seats || "—"}</td><td class="r mono">${bolt(v.rewards, 2)}</td><td>${v.historyPeer ? "✓" : `<span class="badge warn">—</span>`}</td></tr>`).join("")}
+    <div class="card scroll">${d.validators.length ? `<table class="tbl"><thead><tr><th>${t("v.id")}</th><th>${t("v.status")}</th><th>${t("v.owner")}</th><th class="r">${t("v.stake")}</th><th class="r">${t("v.seats")}</th><th class="r">${t("v.rewards")}</th><th>${t("v.peer")}</th><th>${tr("節點版本", "Node version")}</th></tr></thead><tbody>
+      ${d.validators.map((v) => `<tr><td><a href="/validator/${v.id}">#${v.id}</a></td><td>${statusBadge(v.status)}</td><td>${aLink(v.owner)}</td><td class="r mono">${bolt(v.stake, 2)}</td><td class="r">${v.seats || "—"}</td><td class="r mono">${bolt(v.rewards, 2)}</td><td>${v.historyPeer ? "✓" : `<span class="badge warn">—</span>`}</td><td>${v.peer && ver[v.peer] ? `<span class="badge mono">${esc(shortVer(ver[v.peer]))}</span>` : `<span class="muted">—</span>`}</td></tr>`).join("")}
       </tbody></table>` : `<div class="empty">${t("v.none")}</div>`}</div>`;
 }
 async function pageValidator(id) {
@@ -1610,8 +1628,205 @@ async function pageMachine(id) {
     ])}</div>
     <div class="card" style="margin-top:16px"><div class="card-h"><h2>${tr("租約", "Leases")}</h2></div>${leasesTable(m.leaseList)}</div>`;
 }
+// Country centroids [lat, lng] (Google DSPL canonical countries, CC BY 4.0) and a 1° land mask
+// (Natural Earth 110 m, public domain; rows from 90°N, 360 bits per row) for the node globe.
+const CENTROIDS = {"AD":[42.5,1.6],"AE":[23.4,53.8],"AF":[33.9,67.7],"AG":[17.1,-61.8],"AI":[18.2,-63.1],"AL":[41.2,20.2],"AM":[40.1,45.0],"AN":[12.2,-69.1],"AO":[-11.2,17.9],"AQ":[-75.3,-0.1],"AR":[-38.4,-63.6],"AS":[-14.3,-170.1],"AT":[47.5,14.6],"AU":[-25.3,133.8],"AW":[12.5,-70.0],"AZ":[40.1,47.6],"BA":[43.9,17.7],"BB":[13.2,-59.5],"BD":[23.7,90.4],"BE":[50.5,4.5],"BF":[12.2,-1.6],"BG":[42.7,25.5],"BH":[25.9,50.6],"BI":[-3.4,29.9],"BJ":[9.3,2.3],"BM":[32.3,-64.8],"BN":[4.5,114.7],"BO":[-16.3,-63.6],"BR":[-14.2,-51.9],"BS":[25.0,-77.4],"BT":[27.5,90.4],"BV":[-54.4,3.4],"BW":[-22.3,24.7],"BY":[53.7,28.0],"BZ":[17.2,-88.5],"CA":[56.1,-106.3],"CC":[-12.2,96.9],"CD":[-4.0,21.8],"CF":[6.6,20.9],"CG":[-0.2,15.8],"CH":[46.8,8.2],"CI":[7.5,-5.5],"CK":[-21.2,-159.8],"CL":[-35.7,-71.5],"CM":[7.4,12.4],"CN":[35.9,104.2],"CO":[4.6,-74.3],"CR":[9.7,-83.8],"CU":[21.5,-77.8],"CV":[16.0,-24.0],"CX":[-10.4,105.7],"CY":[35.1,33.4],"CZ":[49.8,15.5],"DE":[51.2,10.5],"DJ":[11.8,42.6],"DK":[56.3,9.5],"DM":[15.4,-61.4],"DO":[18.7,-70.2],"DZ":[28.0,1.7],"EC":[-1.8,-78.2],"EE":[58.6,25.0],"EG":[26.8,30.8],"EH":[24.2,-12.9],"ER":[15.2,39.8],"ES":[40.5,-3.7],"ET":[9.1,40.5],"FI":[61.9,25.7],"FJ":[-16.6,179.4],"FK":[-51.8,-59.5],"FM":[7.4,150.6],"FO":[61.9,-6.9],"FR":[46.2,2.2],"GA":[-0.8,11.6],"GB":[55.4,-3.4],"GD":[12.3,-61.6],"GE":[42.3,43.4],"GF":[3.9,-53.1],"GG":[49.5,-2.6],"GH":[7.9,-1.0],"GI":[36.1,-5.3],"GL":[71.7,-42.6],"GM":[13.4,-15.3],"GN":[9.9,-9.7],"GP":[17.0,-62.1],"GQ":[1.7,10.3],"GR":[39.1,21.8],"GS":[-54.4,-36.6],"GT":[15.8,-90.2],"GU":[13.4,144.8],"GW":[11.8,-15.2],"GY":[4.9,-58.9],"GZ":[31.4,34.3],"HK":[22.4,114.1],"HM":[-53.1,73.5],"HN":[15.2,-86.2],"HR":[45.1,15.2],"HT":[19.0,-72.3],"HU":[47.2,19.5],"ID":[-0.8,113.9],"IE":[53.4,-8.2],"IL":[31.0,34.9],"IM":[54.2,-4.5],"IN":[20.6,79.0],"IO":[-6.3,71.9],"IQ":[33.2,43.7],"IR":[32.4,53.7],"IS":[65.0,-19.0],"IT":[41.9,12.6],"JE":[49.2,-2.1],"JM":[18.1,-77.3],"JO":[30.6,36.2],"JP":[36.2,138.3],"KE":[-0.0,37.9],"KG":[41.2,74.8],"KH":[12.6,105.0],"KI":[-3.4,-168.7],"KM":[-11.9,43.9],"KN":[17.4,-62.8],"KP":[40.3,127.5],"KR":[35.9,127.8],"KW":[29.3,47.5],"KY":[19.5,-80.6],"KZ":[48.0,66.9],"LA":[19.9,102.5],"LB":[33.9,35.9],"LC":[13.9,-61.0],"LI":[47.2,9.6],"LK":[7.9,80.8],"LR":[6.4,-9.4],"LS":[-29.6,28.2],"LT":[55.2,23.9],"LU":[49.8,6.1],"LV":[56.9,24.6],"LY":[26.3,17.2],"MA":[31.8,-7.1],"MC":[43.8,7.4],"MD":[47.4,28.4],"ME":[42.7,19.4],"MG":[-18.8,46.9],"MH":[7.1,171.2],"MK":[41.6,21.7],"ML":[17.6,-4.0],"MM":[21.9,96.0],"MN":[46.9,103.8],"MO":[22.2,113.5],"MP":[17.3,145.4],"MQ":[14.6,-61.0],"MR":[21.0,-10.9],"MS":[16.7,-62.2],"MT":[35.9,14.4],"MU":[-20.3,57.6],"MV":[3.2,73.2],"MW":[-13.3,34.3],"MX":[23.6,-102.6],"MY":[4.2,102.0],"MZ":[-18.7,35.5],"NA":[-23.0,18.5],"NC":[-20.9,165.6],"NE":[17.6,8.1],"NF":[-29.0,168.0],"NG":[9.1,8.7],"NI":[12.9,-85.2],"NL":[52.1,5.3],"NO":[60.5,8.5],"NP":[28.4,84.1],"NR":[-0.5,166.9],"NU":[-19.1,-169.9],"NZ":[-40.9,174.9],"OM":[21.5,55.9],"PA":[8.5,-80.8],"PE":[-9.2,-75.0],"PF":[-17.7,-149.4],"PG":[-6.3,144.0],"PH":[12.9,121.8],"PK":[30.4,69.3],"PL":[51.9,19.1],"PM":[46.9,-56.3],"PN":[-24.7,-127.4],"PR":[18.2,-66.6],"PS":[32.0,35.2],"PT":[39.4,-8.2],"PW":[7.5,134.6],"PY":[-23.4,-58.4],"QA":[25.4,51.2],"RE":[-21.1,55.5],"RO":[45.9,25.0],"RS":[44.0,21.0],"RU":[61.5,105.3],"RW":[-1.9,29.9],"SA":[23.9,45.1],"SB":[-9.6,160.2],"SC":[-4.7,55.5],"SD":[12.9,30.2],"SE":[60.1,18.6],"SG":[1.4,103.8],"SH":[-24.1,-10.0],"SI":[46.2,15.0],"SJ":[77.6,23.7],"SK":[48.7,19.7],"SL":[8.5,-11.8],"SM":[43.9,12.5],"SN":[14.5,-14.5],"SO":[5.2,46.2],"SR":[3.9,-56.0],"ST":[0.2,6.6],"SV":[13.8,-88.9],"SY":[34.8,39.0],"SZ":[-26.5,31.5],"TC":[21.7,-71.8],"TD":[15.5,18.7],"TF":[-49.3,69.3],"TG":[8.6,0.8],"TH":[15.9,101.0],"TJ":[38.9,71.3],"TK":[-9.0,-171.9],"TL":[-8.9,125.7],"TM":[39.0,59.6],"TN":[33.9,9.5],"TO":[-21.2,-175.2],"TR":[39.0,35.2],"TT":[10.7,-61.2],"TV":[-7.1,177.6],"TW":[23.7,121.0],"TZ":[-6.4,34.9],"UA":[48.4,31.2],"UG":[1.4,32.3],"US":[37.1,-95.7],"UY":[-32.5,-55.8],"UZ":[41.4,64.6],"VA":[41.9,12.5],"VC":[13.0,-61.3],"VE":[6.4,-66.6],"VG":[18.4,-64.6],"VI":[18.3,-64.9],"VN":[14.1,108.3],"VU":[-15.4,167.0],"WF":[-13.8,-177.2],"WS":[-13.8,-172.1],"XK":[42.6,20.9],"YE":[15.6,48.5],"YT":[-12.8,45.2],"ZA":[-30.6,22.9],"ZM":[-13.1,27.8],"ZW":[-19.0,29.2]};
+const LAND = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH/4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADf//8AAf///wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB////D//////n/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/gf/x////////wAAAAAbgAAB4AAAAAAPwAAAAAAAAAAAAAAAAAAAAAAAAAAAf//8A///////+AAAAB/ngAAAAAAAAAAH8AAAAAAAAAAAAAAAAAAAAAAAAcH3Hv/5////////8AAAAA/gAAAAAAAAAAAAD4AAAAAAAAAAAAAAAAAAAAAAcIAAQP/AH///////+AAAAAPCAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAADwDAc+f+AP///////4AAAAAAAAAAAAAB4AAAAB/8AAAAAAAAAAAAAAAAAAAAAH9wc374AAAf/////8AAAAAAAAAAAAH4AAAA////AAAB/gAAAAAAAAAAAAAAAAwAAA/QAAAH/////8AAAAAAAAAAAAOAAAAP///wAAAAAAAAAAAAAAAAAAAAP8AYe+c3AAAD/////4AAAAAAAAAAAA4AAAH////++HgAOAAAAAAAAAAAAAAAfv+4+w/4gAAB/////wAAAAAAAAAAADwAHgH///////4AfgAAAAAgAAAAAAAAPf/4O4//9AAB/////wAAAAAAAAAAADwAPb////////4m//gAAAAAAAf+AAAAAA/+A8f//4AB////8gAAAAAAA/gAAAAAfv/////////////8AAAAAB///+H//H/+PeDwf+AA3////AAAAAAA//4AAAA8fv///////////////P8gAf////////A4CPz4H8AAP///wAAAAAAD///wADH/n3/////////////////8AD////////////34Z/wA///4AAAAAAAP///+M////n/////////////////+4E/////////////gD/8Af//gAAAAAAAf//5+P////f/////////////////fw/////////////6AD8YAf/wAAf8AAAA/8f+D///////////////////////AgEf///////////zw7/AAP/gAAP4AAAB/4/+f//////////////////////8AMAf//////////+DIA/gAH/gAAAAAAAH/z/////////////////////////+AAH///////////8AwgOAAD+AAAAAAAA//H/////////////////////////6AAP///////////wAA/AAAB+AAAAAAAB/+H//////////////////////nP+AAAH//z////////wAA/wAAAOAAAAAAAB//D/////////////////////+A/4AAAA/zAD///////gAA/4wAAAAAAAAAAB//Ab///////////////////+eDgAAAAABwAA///////4AA/94AAAAAAAAAYA5+A///////////////////4AAHAAAAAADcAAD//////4AAf/8AAAAAAAAA8AC+C///////////////////wAAfgAAAAAMAAAA///////wAf/8AAAAAAAAA4AO8H///////////////////AAA/gAAAABgAAAA///////8A///AAAAAAAAA8ANwH//////////////////8AAB/AAAAAEAAAAAf///////z///4AAAAAAAHOAEDv//////////////////+AAA+AAAAAAAAAABH///////x///8AAAAAAAHHAf/////////////////////6AA8AAAAAAAAAAAD///////x///8AAAAAAAGPz//////////////////////6AAwAAAAAAAAAAAD///////9///6AAAAAAAAPj//////////////////////6AAQAAAAAAAAAAAC///////////MAAAAAAAAYf//////////////////////7AAAAAAAAAAAAAABv////////+MNAAAAAAAAD///////////////////////zAAAAAAAAAAAAAAAH////////7gfgAAAAAAAf///////////////////////yAAAAAAAAAAAAAAAL/////////gCgAAAAAAAH///////////////////////iAAAAAAAAAAAAAAAP/////////pAAAAAAAAAD/////uP/x//////////////DAAAAAAAAAAAAAAAP/////////+AAAAAAAAAB//v//Gf/B/////////////+AAAAAAAAAAAAAAAAP////////8wAAAAAAAAAB//H/+AP+P/////////////8CAAAAAAAAAAAAAAAP////////wAAAAAAAAADj/jz/8AD/H/////////////4HgAAAAAAAAAAAAAAP////////gAAAAAAAAAH/4Bw/8AA/B////////////+APAAAAAAAAAAAAAAAP////////gAAAAAAAAAH/wA8f8Ph/g////////////8AAAAAAAAAAAAAAAAAP///////8AAAAAAAAAAH/gMHfJ///x///////////v4AMAAAAAAAAAAAAAAAP///////8AAAAAAAAAAH/AMCOP///h//////////+JwAMAAAAAAAAAAAAAAAH///////4AAAAAAAAAAH/AAAHH///g//////////8BwAIAAAAAAAAAAAAAAAH///////wAAAAAAAAAAH+AAYGH///w//////////+w4A4AAAAAAAAAAAAAAAD///////wAAAAAAAAAAAgf+ACBs//////////////g4D4AAAAAAAAAAAAAAAB///////wAAAAAAAAAAAj/+AAAA//////////////AYf4AAAAAAAAAAAAAAAA///////gAAAAAAAAAAB//8AAAA//////////////Ah2AAAAAAAAAAAAAAAAAP/////+AAAAAAAAAAAD//+AAAB//////////////gDwAAAAAAAAAAAAAAAAAH/////8AAAAAAAAAAAH///4GAB//////////////gDAAAAAAAAAAAAAAAAAAG/////4AAAAAAAAAAAP///8P4h//////////////wCAAAAAAAAAAAAAAAAAACf////4AAAAAAAAAAAP////v////////////////gAAAAAAAAAAAAAAAAAAABP//hgYAAAAAAAAAAAP//////3//P///////////wAAAAAAAAAAAAAAAAAAAAv//AAYAAAAAAAAAAAf//////9//H///////////wAAAAAAAAAAAAAAAAAAAB3/+AAcAAAAAAAAAAB///////4//h///////////gAAAAAAAAAAAAAAAAAAAAR/+AANAAAAAAAAAAD///////8//wH//////////AAAAAAAAAAAAAAAAAAAAAJ/+AAEAAAAAAAAAAH///////+f/0B/////////+AAAAAAAAAAAAAAAAAAAAAI/8AAAAAAAAAAAAAH///////+f/44Af///////+QAAAAAAAAAAAAAAAAAAAAAf8AAAAAAAAAAAAAP////////H//+AP///////4gAAAAAAAAAAAAAAAAAAAAAP8AAuAAAAAAAAAAP////////H///AD///v///ggAAAAAAAAAAAAAAAAAAAAAH+AABgAAAAAAAAAf////////n//+AD//4P//YAAAAAAAAAAAAAAAAAAAAAAAP+A4AYAAAAAAAAAP////////j//+AAf/4H/+AAAAAAAAAAAAAAAAgAAAAAAAH/B4ABwAAAAAAAAP////////h//8AAf/gD/8YAAAAAAAAAAAAAAAAAAAAAAAD/nwAD9AAAAAAAAP////////x//4AAf/AD/8QAAAAAAAAAAAAAAAAAAAAAAAAf/wAAAAAAAAAAAP////////4//gAAf+AD/+AAwAAAAAAAAAAAAAAAAAAAAAAH/wAAAAAAAAAAAf////////4f+AAAf8AD//AAwAAAAAAAAAAAAAAAAAAAAAAAH/AAAAAAAAAAAf////////8f8AAAPwAAP/gAwAAAAAAAAAAAAAAAAAAAAAAAD/gAAAAAAAAAAf////////+fgAAAPwAAP/gAwAAAAAAAAAAAAAAAAAAAAAAAA/AAAAAAAAAAAf/////////eAAAAHwAAP/gAMAAAAAAAAAAAAAAAAAAAAAAAAHgAAAAAAAAAAf/////////gAAAAHwAAM/gACAAAAAAAAAAAAAAAAAAAAAAAADABAAAAAAAAAP/////////gYAAADwAAEfgAJAAAAAAAAAAAAAAAAAAAAAAAADgPfKAAAAAAAH/////////34AAADwAAIOABAAAAAAAAAAAAAAAAAAAAAAAAAAyPf+AAAAAAAD//////////4AAADoAAIEACBAAAAAAAAAAAAAAAAAAAAAAAAA8///AAAAAAAB//////////wAAABIAAMAAAFAAAAAAAAAAAAAAAAAAAAAAAAAE///gAAAAAAB//////////wAAAAMAAEAAALgAAAAAAAAAAAAAAAAAAAAAAAAAf//wAAAAAAAf/////////gAAAAMAADAAMCAAAAAAAAAAAAAAAAAAAAAAAAAA////gAAAAAAP/B///////gAAAAAAADgAOAAAAAAAAAAAAAAAAAAAAAAAAAAAf///wAAAAAACAA///////AAAAAAAAxgA+AAAAAAAAAAAAAAAAAAAAAAAAAAAf///4AAAAAAAAAD/////+AAAAAAAAZgB4AAAAAAAAAAAAAAAAAAAAAAAAAAB////4AAAAAAAAAD/////8AAAAAAAAMwH8AAAAAAAAAAAAAAAAAAAAAAAAAAB////8AAAAAAAAAH/////4AAAAAAAAHQf8AIAAAAAAAAAAAAAAAAAAAAAAAAD////8AAAAAAAAAH/////gAAAAAAAAHgf88IAAAAAAAAAAAAAAAAAAAAAAAAD////+AAAAAAAAAH/////AAAAAAAAADwf8AAgAAAAAAAAAAAAAAAAAAAAAAAH/////4AAAAAAAAH/////AAAAAAAAABwP5wBwAAAAAAAAAAAAAAAAAAAAAAAH/////6AAAAAAAAD////+AAAAAAAAAB8P5wATwAAAAAAAAAAAAAAAAAAAAAAD//////4AAAAAAAB////8AAAAAAAAAA8AxQif+AAAAAAAAAAAAAAAAAAAAAAH//////8AAAAAAAB////4AAAAAAAAAAcAAIAD/gAAAAAAAAAAAAAAAAAAAAAH///////gAAAAAAA////4AAAAAAAAAAMAAIAI/ywAAAAAAAAAAAAAAAAAAAAH///////gAAAAAAA////4AAAAAAAAAADgAAAI/8BAAAAAAAAAAAAAAAAAAAAD///////gAAAAAAAf///4AAAAAAAAAAB+AAAA/4AIAAAAAAAAAAAAAAAAAAAB///////gAAAAAAAf///4AAAAAAAAAAAAmogAOMAAAAAAAAAAAAAAAAAAAAAB///////AAAAAAAAf///8AAAAAAAAAAAABCAAAGADAAAAAAAAAAAAAAAAAAAA///////AAAAAAAAf///8AAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAAAf/////+AAAAAAAAP///8AAAAAAAAAAAAAAAgCAAAAAAAAAAAAAAAAAAAAAAAf/////8AAAAAAAAf///+AQAAAAAAAAAAAAB+CAAAAAAAAAAAAAAAAAAAAAAAP/////4AAAAAAAAf///+AQAAAAAAAAAAAAD8DAAAAAAAAAAAAAAAAAAAAAAAP/////4AAAAAAAA////+AwAAAAAAAAAAAA38DgAAAAAAAAAAAAAAAAAAAAAAH/////4AAAAAAAA////8BwAAAAAAAAAAAD/8DgAAAAAAAAAAAAAAAAAAAAAAB/////4AAAAAAAA////8PwAAAAAAAAAAAD//HwAABABAAAAAAAAAAAAAAAAAAf////4AAAAAAAA////wPgAAAAAAAAAAAP//3wAAAACAAAAAAAAAAAAAAAAAAP////wAAAAAAAA////APgAAAAAAAAAAAP///wAAAAAAAAAAAAAAAAAAAAAAAP////wAAAAAAAAf//+APgAAAAAAAAAAAf///4AAAAAAAAAAAAAAAAAAAAAAAP////wAAAAAAAAf//+APgAAAAAAAAAAD////+AAIAAAAAAAAAAAAAAAAAAAAP////gAAAAAAAAP//+AfAAAAAAAAAAAf////+AAEAAAAAAAAAAAAAAAAAAAAP////AAAAAAAAAP///AfAAAAAAAAAAA//////AAAAAAAAAAAAAAAAAAAAAAAP///4AAAAAAAAAP//+APAAAAAAAAAAA//////gAAAAAAAAAAAAAAAAAAAAAAf///gAAAAAAAAAH//+AOAAAAAAAAAAB//////wAAAAAAAAAAAAAAAAAAAAAAf///AAAAAAAAAAH//4AEAAAAAAAAAAA//////4AAAAAAAAAAAAAAAAAAAAAAf//+AAAAAAAAAAH//4AAAAAAAAAAAAB//////4AAAAAAAAAAAAAAAAAAAAAAf//+AAAAAAAAAAH//4AAAAAAAAAAAAA//////4AAAAAAAAAAAAAAAAAAAAAAf//+AAAAAAAAAAD//wAAAAAAAAAAAAAf/////8AAAAAAAAAAAAAAAAAAAAAAf//8AAAAAAAAAAB//gAAAAAAAAAAAAAf/////4AAAAAAAAAAAAAAAAAAAAAA///8AAAAAAAAAAB//gAAAAAAAAAAAAAf/////4AAAAAAAAAAAAAAAAAAAAAA///4AAAAAAAAAAA//AAAAAAAAAAAAAAP/////4AAAAAAAAAAAAAAAAAAAAAAf//wAAAAAAAAAAA/+AAAAAAAAAAAAAAP/AP//wAAAAAAAAAAAAAAAAAAAAAA///gAAAAAAAAAAA/4AAAAAAAAAAAAAAf8AG//gAAAAAAAAAAAAAAAAAAAAAA//3AAAAAAAAAAAAYAAAAAAAAAAAAAAAOAAF//gAAAAAAAAAAAAAAAAAAAAAB//4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//AAABAAAAAAAAAAAAAAAAAAB//4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/AAAAgAAAAAAAAAAAAAAAAAD//4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/AAAAQAAAAAAAAAAAAAAAAAB//gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABYAAAAcAAAAAAAAAAAAAAAAAB/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAD/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAD/gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcAAADQAAAAAAAAAAAAAAAAAD/4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcAAAHAAAAAAAAAAAAAAAAAAB/gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAOAAAAAAAAAAAAAAAAAAD/gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAAAAAH+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB4AAAAAAAAAAAAAAAAAAH+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAAAAH/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8AAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAH4AwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAAAAAAAAAAAAAH4AAAAAAB4HgAD8AAAAAAAAAAAAAAAAAAAAAAAAADgAAAAAAAAAAAAAAAAAA//AAAD//////////wAAAAAAAAAAAAAAAAAAAAAAADgAAAAAAAAAAAAAAAAAf///4Af///////////AAAAAAAAAAAAAAAAAAAAAAAz4AAAAAAAAAAAAAAAPz////8B/////////////wAAAAAAAAAAAAAAAAAAAAA78AAAAAAAAAAA8/8///////wf/////////////+AAAAAAAAAAAAAAAAAAAAH9+AAAAAAAAZ////////////w////////////////4AAAAAAAAAAAAAAAAAAAB+AAAAAAAB//////////////////////////////4AAAAAAAAABmAAB8f+HB/+AAAAAAAP//////////////////////////////gAAAAAAAAP/c/oAf/////4AAAAAAAP/////////////////////////////8AAAAAAAD/////////////gAAAAAAB//////////////////////////////wAAAAAAAD////////////wAAAAAAP///////////////////////////////wAAAAAD/////////////4AAAAAAD////////////////////////////////wAAAADh/////////////AAAAB8A/////////////////////////////////+AAAAA4Af///////////gAAAH+AA///////////////////////////////+AAAAAAAAH///////////+A/A/wAA///////////////////////////////8AAAAAAAf//////////////gAAAf////////////////////////////////+AAAAAAAH///////////////h////////////////////////////////////wAAAAAAP/////////////////////////////////////////////////////gA+/gAAH/////////////////////////////////////////////////////8/////v//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////";
+// ---------- network: node census, versions and countries ----------
+const regionNames = {};
+function countryName(code) {
+  if (!code) return tr("未知", "Unknown");
+  const l = lang === "zh" ? "zh-TW" : "en";
+  try { regionNames[l] = regionNames[l] || new Intl.DisplayNames([l], { type: "region" }); return regionNames[l].of(code) || code; } catch (_) { return code; }
+}
+const flag = (code) => (code && /^[A-Z]{2}$/.test(code) ? String.fromCodePoint(...[...code].map((c) => 0x1f1a5 + c.charCodeAt(0))) : "🌐");
+const shortVer = (v) => String(v || "?").replace(/^boltchain\//, "");
+let nodesCache = null;
+async function nodesCensus() {
+  if (nodesCache && Date.now() - nodesCache.at < 20000) return nodesCache.d;
+  const d = await api("nodes");
+  nodesCache = { at: Date.now(), d };
+  return d;
+}
+
+/// A dotted globe (orthographic projection) with a marker per country; drag to turn it.
+function makeGlobe(canvas) {
+  const bits = Uint8Array.from(atob(LAND), (c) => c.charCodeAt(0));
+  const pts = [];
+  for (let r = 0; r < 180; r++) {
+    const lat = 89.5 - r;
+    const step = Math.max(1, Math.round(1 / Math.max(0.05, Math.cos((lat * Math.PI) / 180))));
+    for (let c = 0; c < 360; c += step) {
+      const i = r * 360 + c;
+      if (bits[i >> 3] & (0x80 >> (i & 7))) pts.push([(lat * Math.PI) / 180, ((c - 179.5) * Math.PI) / 180]);
+    }
+  }
+  const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const g = { lon0: 0, lat0: 0.32, markers: [], target: null, drag: null, spin: !reduce, last: performance.now(), colors: null, colorsAt: 0 };
+  const rad = (d) => (d * Math.PI) / 180;
+  const project = (lat, lon) => {
+    const cl = Math.cos(lat), dl = lon - g.lon0;
+    const z = Math.sin(g.lat0) * Math.sin(lat) + Math.cos(g.lat0) * cl * Math.cos(dl);
+    return [cl * Math.sin(dl), Math.cos(g.lat0) * Math.sin(lat) - Math.sin(g.lat0) * cl * Math.cos(dl), z];
+  };
+  canvas.addEventListener("pointerdown", (e) => { g.drag = { x: e.clientX, y: e.clientY, lon: g.lon0, lat: g.lat0 }; g.target = null; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!g.drag) return;
+    const R = Math.min(canvas.clientWidth, canvas.clientHeight) * 0.42;
+    g.lon0 = g.drag.lon - (e.clientX - g.drag.x) / R;
+    g.lat0 = Math.max(-1.2, Math.min(1.2, g.drag.lat + (e.clientY - g.drag.y) / R));
+  });
+  const end = () => { g.drag = null; };
+  canvas.addEventListener("pointerup", end);
+  canvas.addEventListener("pointercancel", end);
+  const frame = (now) => {
+    if (!document.body.contains(canvas)) return; // left the page
+    const dt = Math.min(0.1, (now - g.last) / 1000);
+    g.last = now;
+    if (g.target) {
+      let d = g.target.lon - g.lon0;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      g.lon0 += d * Math.min(1, dt * 4);
+      g.lat0 += (g.target.lat - g.lat0) * Math.min(1, dt * 4);
+      if (Math.abs(d) < 0.002 && Math.abs(g.target.lat - g.lat0) < 0.002) g.target = null;
+    } else if (g.spin && !g.drag && !document.hidden) g.lon0 += dt * 0.08;
+    const w = canvas.clientWidth, h = canvas.clientHeight, dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (!g.colors || now - g.colorsAt > 1000) {
+      const cs = getComputedStyle(document.documentElement);
+      g.colors = { dot: cs.getPropertyValue("--muted").trim() || "#8b9ab0", acc: cs.getPropertyValue("--accent2").trim() || "#63b3ff", teal: cs.getPropertyValue("--teal").trim() || "#6cc3bb", text: cs.getPropertyValue("--text").trim() || "#e7edf5", panel: cs.getPropertyValue("--panel").trim() || "#111823", line: cs.getPropertyValue("--line").trim() || "#1e2938" };
+      g.colorsAt = now;
+    }
+    const C = g.colors, cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.42;
+    // Rim.
+    const halo = ctx.createRadialGradient(cx, cy, R * 0.9, cx, cy, R * 1.12);
+    halo.addColorStop(0, "rgba(99,179,255,0.10)");
+    halo.addColorStop(1, "rgba(99,179,255,0)");
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(cx, cy, R * 1.12, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = C.line; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+    // Land.
+    ctx.fillStyle = C.dot;
+    const ds = Math.max(1.2, R / 140);
+    for (const [lat, lon] of pts) {
+      const [x, y, z] = project(lat, lon);
+      if (z <= 0) continue;
+      ctx.globalAlpha = 0.3 + 0.7 * z;
+      ctx.fillRect(cx + x * R - ds / 2, cy - y * R - ds / 2, ds, ds);
+    }
+    ctx.globalAlpha = 1;
+    // Markers, biggest last; labels for the largest visible ones.
+    const pulse = (now / 1600) % 1;
+    const shown = [];
+    for (const m of g.markers) {
+      const [x, y, z] = project(rad(m.lat), rad(m.lng));
+      if (z <= 0.05) continue;
+      const px = cx + x * R, py = cy - y * R, r = Math.min(18, 3 + 2.4 * Math.sqrt(m.count)) * (0.6 + 0.4 * z);
+      ctx.globalAlpha = (1 - pulse) * 0.5 * z;
+      ctx.strokeStyle = C.acc; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(px, py, r + pulse * 14, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 0.85 * z + 0.15;
+      ctx.fillStyle = C.acc;
+      ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      shown.push({ m, px, py, r, z });
+    }
+    ctx.font = "600 12px -apple-system,'Segoe UI','PingFang TC','Noto Sans TC',sans-serif";
+    const placed = [];
+    for (const s of shown.sort((a, b) => b.m.count - a.m.count).slice(0, 6)) {
+      const t1 = s.m.label, t2 = s.m.sub;
+      const tw = Math.max(ctx.measureText(t1).width, ctx.measureText(t2).width) + 16;
+      let bx = s.px + s.r + 8, by = s.py - 18;
+      if (bx + tw > w - 4) bx = s.px - s.r - 8 - tw;
+      if (placed.some((p) => bx < p.x + p.w && bx + tw > p.x && by < p.y + 36 && by + 36 > p.y)) continue;
+      placed.push({ x: bx, y: by, w: tw });
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = C.panel; ctx.strokeStyle = C.line;
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx, by, tw, 36, 6) : ctx.rect(bx, by, tw, 36); ctx.fill(); ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = C.text; ctx.fillText(t1, bx + 8, by + 15);
+      ctx.fillStyle = C.teal; ctx.fillText(t2, bx + 8, by + 30);
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+  return {
+    setMarkers(ms) {
+      const first = !g.markers.length && ms.length;
+      g.markers = ms.slice().sort((a, b) => a.count - b.count);
+      if (first) { const top = ms.reduce((a, b) => (b.count > a.count ? b : a)); g.lon0 = rad(top.lng) - 0.35; g.lat0 = Math.max(-0.6, Math.min(0.9, rad(top.lat) * 0.8)); }
+    },
+    focus(lat, lng) { g.target = { lat: Math.max(-1.2, Math.min(1.2, rad(lat))), lon: rad(lng) }; },
+  };
+}
+
+async function pageNetwork() {
+  const d = await nodesCensus();
+  if (!d.enabled) {
+    $app.innerHTML = `<h1>${tr("網路節點", "Network")}</h1><div class="card">${kv([[tr("此節點版本", "This node's version"), `<span class="mono">${esc(d.self.version)}</span>`]])}</div>
+      <div class="empty">${tr("這個瀏覽器節點沒有連上 P2P 網路，無法統計其他節點。", "This explorer node is not on the P2P network, so it cannot count other nodes.")}</div>`;
+    return;
+  }
+  $app.innerHTML = `<h1>${tr("網路節點", "Network")} <span class="badge" id="nw-total"></span></h1>
+    <div class="card globe-card"><canvas id="globe" aria-label="${esc(tr("節點分布地球儀", "Globe of node locations"))}"></canvas>
+      <div class="globe-hint">${tr("拖曳可轉動 · 點國家卡片可定位", "Drag to turn · click a country to find it")}</div></div>
+    <div class="grid stats" id="nw-stats" style="margin-top:16px"></div>
+    <div class="card" style="margin-bottom:16px"><div class="card-h"><h2>${tr("國家 / 地區", "Countries and regions")}</h2></div><div class="cc-grid" id="nw-cc"></div></div>
+    <div class="grid two">
+      <div class="card"><div class="card-h"><h2>${tr("軟體版本", "Software versions")}</h2></div><div id="nw-ver"></div></div>
+      <div class="card"><div class="card-h"><h2>${tr("節點", "Nodes")}</h2></div><div class="scroll" id="nw-list" style="max-height:460px;overflow:auto"></div></div>
+    </div>
+    <p class="hint" style="margin-top:14px" id="nw-note"></p>`;
+  const globe = makeGlobe(document.getElementById("globe"));
+  const render = (d) => {
+    const total = d.total, majority = d.versions.length ? d.versions[0].version : null;
+    const located = d.countries.filter((c) => c.country);
+    document.getElementById("nw-total").textContent = `${num(total)} ${tr("個節點", "nodes")}`;
+    const direct = d.nodes.filter((n) => n.direct).length;
+    const stats = [
+      [tr("線上節點", "Nodes online"), num(total), `${num(direct)} ${tr("個直接連線", "connected directly")}`],
+      [tr("國家 / 地區", "Countries and regions"), num(located.length), d.geoip ? `${num(total - located.reduce((a, c) => a + c.count, 0))} ${tr("個位置未知", "unlocated")}` : tr("未設定 IP 資料庫", "no IP database")],
+      [tr("軟體版本", "Versions"), num(d.versions.length), majority ? `${tr("多數", "most")}：${esc(shortVer(majority))}` : "—"],
+      [tr("此瀏覽器節點", "This explorer node"), `<span class="mono" style="font-size:15px">${esc(shortVer(d.self.version))}</span>`, `<span class="mono">${esc(short(d.self.peer, 8, 6))}</span>`],
+    ];
+    document.getElementById("nw-stats").innerHTML = stats.map(([k, v, s]) => `<div class="card stat"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
+    globe.setMarkers(located.filter((c) => CENTROIDS[c.country]).map((c) => ({ lat: CENTROIDS[c.country][0], lng: CENTROIDS[c.country][1], count: c.count, label: `${countryName(c.country)}`, sub: `${num(c.count)} ${tr("個節點", c.count === 1 ? "node" : "nodes")}` })));
+    const cc = document.getElementById("nw-cc");
+    cc.innerHTML = d.countries.length ? d.countries.map((c) => {
+      const inC = d.nodes.filter((n) => (n.country || null) === (c.country || null));
+      const upToDate = inC.filter((n) => n.version === majority).length;
+      return `<button class="cc" data-cc="${esc(c.country || "")}" ${c.country && CENTROIDS[c.country] ? "" : "disabled"}>
+        <div class="cc-h"><span class="cc-f">${flag(c.country)}</span><span class="cc-n">${esc(countryName(c.country))}</span><span class="cc-c">${num(c.count)}</span></div>
+        <div class="meter"><div class="b"><i style="width:${Math.max(3, (100 * c.count) / total).toFixed(1)}%"></i></div></div>
+        <div class="cc-s"><span>${((100 * c.count) / total).toFixed(0)}% ${tr("的節點", "of nodes")}</span><span>${upToDate}/${inC.length} ${tr("多數版本", "on the main version")}</span></div></button>`;
+    }).join("") : `<div class="empty">—</div>`;
+    cc.querySelectorAll("button[data-cc]").forEach((b) => (b.onclick = () => { const p = CENTROIDS[b.dataset.cc]; if (p) { globe.focus(p[0], p[1]); document.getElementById("globe").scrollIntoView({ behavior: "smooth", block: "center" }); } }));
+    document.getElementById("nw-ver").innerHTML = d.versions.map((v) => `<div class="ver-row"><div class="ver-h"><span class="mono">${esc(v.version || "?")}</span>
+        ${v.version === majority ? `<span class="badge ok">${tr("多數", "majority")}</span>` : `<span class="badge warn">${tr("非多數", "minority")}</span>`}
+        ${v.version === d.self.version ? `<span class="badge acc">${tr("此節點", "this node")}</span>` : ""}<span style="flex:1"></span><b>${num(v.count)}</b></div>
+        <div class="meter"><div class="b"><i style="width:${((100 * v.count) / total).toFixed(1)}%"></i></div></div></div>`).join("");
+    const rows = d.nodes.slice().sort((a, b) => (b.local - a.local) || (b.direct - a.direct) || (b.seen - a.seen)).slice(0, 500);
+    document.getElementById("nw-list").innerHTML = `<table class="tbl"><thead><tr><th>${tr("節點 ID", "Peer ID")}</th><th>${tr("版本", "Version")}</th><th>${tr("位置", "Location")}</th><th>${tr("來源", "Source")}</th><th class="r">${tr("最後回報", "Last seen")}</th></tr></thead><tbody>
+      ${rows.map((n) => `<tr><td class="mono" title="${esc(n.peer)}">${esc(short(n.peer, 8, 6))}${copyBtn(n.peer)}</td>
+        <td><span class="badge ${n.version === majority ? "" : "warn"} mono">${esc(shortVer(n.version))}</span></td>
+        <td>${flag(n.country)} ${esc(countryName(n.country))}</td>
+        <td>${n.local ? `<span class="badge acc">${tr("此節點", "this node")}</span>` : n.direct ? tr("直接連線", "connected") : tr("心跳回報", "heartbeat")}</td>
+        <td class="r muted">${n.local || n.direct ? tr("現在", "now") : ago(n.seen)}</td></tr>`).join("")}
+      </tbody></table>`;
+    document.getElementById("nw-note").innerHTML = tr(
+      `統計範圍：這個節點連線中的節點，以及最近 ${Math.round(35)} 分鐘內送出心跳的節點（每個節點每 ${Math.round(d.heartbeatSecs / 60)} 分鐘廣播一次自己的版本與公開位址，以節點金鑰簽章）。國家依公開 IP 推算，不公開 IP 本身；節點自行回報的位址未經驗證，僅供參考。`,
+      `Counted: nodes connected to this one, and nodes whose heartbeat arrived in the last 35 minutes (every node broadcasts its version and public addresses every ${Math.round(d.heartbeatSecs / 60)} minutes, signed with its node key). Countries come from public IPs, which are not published; addresses a node reports about itself are not verified.`
+    ) + (d.geoip ? ` <a href="https://db-ip.com" target="_blank" rel="noopener">IP Geolocation by DB-IP</a>` : "");
+  };
+  render(d);
+  every(30000, async () => { nodesCache = null; render(await nodesCensus()); });
+}
 // Clean URLs (/block/12, /tx/0x…): the server answers every page path with this file.
-const PAGES = new Set(["blocks", "block", "tx", "address", "validators", "validator", "epoch", "verify", "cert", "compute", "job", "tee", "lease", "machine"]);
+const PAGES = new Set(["blocks", "block", "tx", "address", "validators", "validator", "epoch", "verify", "cert", "compute", "job", "tee", "lease", "machine", "network"]);
 function nav(url) {
   history.pushState(null, "", url);
   route();
@@ -1633,6 +1848,7 @@ async function route() {
     else if (page === "epoch") await pageEpoch(arg);
     else if (page === "verify") q.get("mode") === "proof" ? pageVerify() : await pageRecords();
     else if (page === "cert") await pageCert(arg);
+    else if (page === "network") await pageNetwork();
     else if (page === "compute") await pageCompute();
     else if (page === "job") await pageJob(arg);
     else if (page === "tee") await pageTee();

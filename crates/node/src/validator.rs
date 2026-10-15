@@ -1550,6 +1550,11 @@ pub struct StorageArgs {
     /// with a `contracts` map (e.g. `scripts/uniswap-v4/deployments/8018.json`). Repeatable.
     #[arg(long = "explorer-labels", value_name = "FILE")]
     pub explorer_labels: Vec<std::path::PathBuf>,
+    /// IP-to-country database for the explorer's node map: DB-IP "IP to Country Lite" CSV
+    /// (`.csv` or `.csv.gz`, <https://db-ip.com/db/download/ip-to-country-lite>). Without it the
+    /// map shows versions only.
+    #[arg(long, value_name = "FILE")]
+    pub geoip: Option<std::path::PathBuf>,
     /// `Certificates` contract for the explorer's evidence certificates (ADR 0016): the explorer
     /// then accepts uploads for certificate storage deals and announces them to providers.
     #[arg(long, value_name = "ADDRESS")]
@@ -1655,6 +1660,9 @@ pub async fn run(args: ValidatorArgs) -> Result<()> {
             let n = crate::explorer::load_labels(&args.storage.explorer_labels)?;
             tracing::info!(contracts = n, "explorer labels loaded");
         }
+        if let Some(f) = &args.storage.geoip {
+            crate::explorer::load_geoip(f)?;
+        }
         let addr = args.storage.gateway.unwrap_or(([127, 0, 0, 1], 8080).into());
         let certs = args.storage.certificates.map(|a| {
             let st = storage.clone();
@@ -1678,6 +1686,7 @@ pub async fn run(args: ValidatorArgs) -> Result<()> {
                 storage: storage.clone(),
                 rt: tokio::runtime::Handle::current(),
             })),
+            net: Some(net.clone()),
         };
         crate::explorer::start(addr, ex).await?;
     } else if let Some(addr) = args.storage.gateway {

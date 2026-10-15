@@ -56,6 +56,7 @@ pub mod devnet;
 pub mod explorer;
 pub mod follow;
 pub mod gateway;
+pub mod geoip;
 pub mod keys;
 pub mod keystore;
 pub mod market;

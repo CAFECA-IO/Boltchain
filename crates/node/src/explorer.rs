@@ -52,6 +52,8 @@ pub struct Explorer {
     pub certs: Option<Arc<crate::certificates::Certs>>,
     /// Block hosting (the node's storage service), for compute jobs posted from the browser.
     pub host: Option<Arc<dyn bolt_rpc::BlockHost>>,
+    /// The node's network, for the node census (`/api/nodes`).
+    pub net: Option<bolt_net::NetHandle>,
 }
 
 pub(crate) type ApiResult = Result<Value, (u16, String)>;
@@ -77,6 +79,17 @@ pub(crate) fn internal(e: impl std::fmt::Display) -> (u16, String) {
 
 fn wei(v: U256) -> String {
     v.to_string()
+}
+
+/// IP-to-country database (`--geoip`).
+static GEOIP: std::sync::OnceLock<crate::geoip::GeoIp> = std::sync::OnceLock::new();
+
+/// Loads the IP-to-country database for the node map.
+pub fn load_geoip(path: &std::path::Path) -> anyhow::Result<()> {
+    let g = crate::geoip::GeoIp::load(path)?;
+    tracing::info!(source = %g.source, "IP-to-country database loaded");
+    let _ = GEOIP.set(g);
+    Ok(())
 }
 
 /// Names of well-known contracts deployed on this network (`--explorer-labels`).
@@ -220,6 +233,7 @@ impl Explorer {
             ["compute"] => self.compute(&r, query),
             ["compute", "job", id] => self.compute_job(&r, id),
             ["compute", "blocks"] => self.compute_blocks(query),
+            ["nodes"] => Ok(self.nodes_census()),
             ["tee"] => self.tee(&r, query),
             ["tee", "lease", id] => self.tee_lease(&r, id),
             ["tee", "machine", id] => self.tee_machine(&r, id),
@@ -672,6 +686,7 @@ impl Explorer {
                 "rewards": wei(rewards),
                 "seats": seats,
                 "historyPeer": !peer.is_empty(),
+                "peer": libp2p::PeerId::from_bytes(&peer).ok().map(|p| p.to_string()),
             }));
         }
         Ok(
@@ -1010,7 +1025,9 @@ fn is_page(path: &str) -> bool {
     let (page, arg, rest) = (parts.next().unwrap_or(""), parts.next(), parts.next());
     rest.is_none()
         && match page {
-            "blocks" | "validators" | "verify" | "compute" | "tee" => arg.is_none_or(str::is_empty),
+            "blocks" | "validators" | "verify" | "compute" | "tee" | "network" => {
+                arg.is_none_or(str::is_empty)
+            }
             "job" | "lease" | "machine" => arg.is_some_and(|a| !a.is_empty()),
             "block" | "tx" | "address" | "validator" | "epoch" | "cert" => {
                 arg.is_some_and(|a| !a.is_empty())
@@ -1068,6 +1085,53 @@ pub fn spawn_address_index(chain: Arc<Chain>) -> anyhow::Result<()> {
     Ok(())
 }
 
+impl Explorer {
+    /// `GET /api/nodes`: nodes online (this one, its peers and those whose heartbeats arrived),
+    /// counted by version and by country. Addresses are not published, only countries.
+    pub(crate) fn nodes_census(&self) -> Value {
+        let Some(net) = &self.net else {
+            return json!({ "enabled": false, "self": { "version": crate::CLIENT_VERSION } });
+        };
+        let geo = GEOIP.get();
+        let nodes = net.nodes();
+        let mut versions: HashMap<String, u64> = HashMap::new();
+        let mut countries: HashMap<String, u64> = HashMap::new();
+        let list: Vec<Value> = nodes
+            .iter()
+            .map(|n| {
+                let country = geo.and_then(|g| n.ips.iter().find_map(|ip| g.country(*ip)));
+                *versions.entry(n.version.clone()).or_default() += 1;
+                *countries.entry(country.clone().unwrap_or_default()).or_default() += 1;
+                json!({
+                    "peer": n.peer.to_string(),
+                    "version": n.version,
+                    "country": country,
+                    "seen": n.seen,
+                    "direct": n.direct,
+                    "local": n.local,
+                })
+            })
+            .collect();
+        let sorted = |m: HashMap<String, u64>, key: &str| -> Vec<Value> {
+            let mut v: Vec<(String, u64)> = m.into_iter().collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            v.into_iter()
+                .map(|(k, c)| json!({ key: if k.is_empty() { Value::Null } else { json!(k) }, "count": c }))
+                .collect()
+        };
+        json!({
+            "enabled": true,
+            "self": { "peer": net.peer_id().to_string(), "version": crate::CLIENT_VERSION },
+            "total": nodes.len(),
+            "versions": sorted(versions, "version"),
+            "countries": sorted(countries, "country"),
+            "nodes": list,
+            "geoip": geo.map(|g| g.source.clone()),
+            "heartbeatSecs": bolt_net::nodes::HEARTBEAT.as_secs(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1089,7 +1153,7 @@ mod tests {
             w.enable_address_index().unwrap();
             w.commit().unwrap();
         }
-        let ex = Explorer { chain, pool: None, certs: None, host: None };
+        let ex = Explorer { chain, pool: None, certs: None, host: None, net: None };
         let (s, v) = get(&ex, "/api/status");
         assert_eq!(s, 200);
         assert_eq!(v["chainId"], 1337);
@@ -1185,6 +1249,7 @@ mod tests {
             "/tee",
             "/lease/1",
             "/machine/2",
+            "/network",
         ] {
             let (s, ct, _) = ex.respond(&format!("GET {page} HTTP/1.1\r\n\r\n"), &[]).unwrap();
             assert_eq!((s, ct), (200, "text/html; charset=utf-8"), "{page}");
@@ -1196,6 +1261,9 @@ mod tests {
         let (_, v) = get(&ex, "/api/compute");
         assert_eq!(v["enabled"], true);
         assert_eq!(v["jobCount"], 0);
+        let (_, v) = get(&ex, "/api/nodes");
+        assert_eq!(v["enabled"], false, "no network here");
+        assert_eq!(v["self"]["version"], crate::CLIENT_VERSION);
         let (_, v) = get(&ex, "/api/tee");
         assert_eq!(v["enabled"], true);
         assert_eq!(v["collateral"]["root"], "simulated");

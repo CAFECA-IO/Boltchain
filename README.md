@@ -132,7 +132,7 @@ boltchain lease verify 1 && boltchain lease deliver 1 --file api-key.txt
 | **SwarmStorage：付費保存使用者資料** | **完成**；測試網第 2401 塊啟用 |
 | **ComputeMarket：AI 推論市場** | **完成**：零 BOLT 執行者中繼、開放承接、`ModelRegistry`、log-probability 判定、瀏覽器頁面（CAFECA 發出工作）；測試網第 233401 塊啟用 |
 | bolt-vault：加密分片格式（Rust 與 WASM） | 完成 |
-| 內建區塊鏈瀏覽器（繁中 / 英文） | 完成 |
+| 內建區塊鏈瀏覽器（繁中 / 英文） | 完成；「網路」頁顯示線上節點的軟體版本與國家分布 |
 | 存證與託管證據驗證（瀏覽器 `/verify`，ADR 0015） | 完成 |
 | 存證證書：上傳檔案、CAFECA 付款、證書代碼與認證標章（ADR 0016） | 完成 |
 | 公開測試網（4 節點、8 位驗證者）、Uniswap v4 | 運行中 |
@@ -203,6 +203,7 @@ boltchain wallet set-peer --wallet me.json --key validator-key.json --node-key d
 boltchain validator --checkpoint <number>:<hash>      # 從快照起步，不必從 genesis 重放
 boltchain validator --archive                         # 保留全部區塊
 boltchain validator --gateway 0.0.0.0:8080 --explorer --archive   # IPFS 閘道與區塊鏈瀏覽器
+boltchain validator ... --explorer --geoip dbip-country-lite-2026-10.csv.gz   # 「網路」頁依國家統計節點
 boltchain validator --rpc 127.0.0.1:8545 --rpc-storage             # 接收要保存的檔案（RPC 請綁 localhost）
 boltchain history export --datadir data --epoch 3 --out epoch-3.car
 ```

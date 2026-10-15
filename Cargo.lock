@@ -1733,6 +1733,7 @@ dependencies = [
  "bolt-vault",
  "clap",
  "ctr",
+ "flate2",
  "getrandom 0.3.4",
  "k256",
  "libc",

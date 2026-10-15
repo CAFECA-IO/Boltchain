@@ -36,6 +36,10 @@ pub struct DevnetArgs {
     /// `Certificates` contract for the explorer's evidence certificates (ADR 0016).
     #[arg(long, value_name = "ADDRESS")]
     pub certificates: Option<Address>,
+    /// IP-to-country database for the explorer's node map: DB-IP "IP to Country Lite" CSV
+    /// (`.csv` or `.csv.gz`, <https://db-ip.com/db/download/ip-to-country-lite>).
+    #[arg(long, value_name = "FILE")]
+    pub geoip: Option<std::path::PathBuf>,
     /// CAFECA wallet the certificate page pays with.
     #[arg(long, default_value = "https://cafeca.io")]
     pub cafeca_wallet: String,
@@ -80,25 +84,6 @@ pub async fn run(args: DevnetArgs) -> Result<()> {
     let (addr, handle) = bolt_rpc::start(args.rpc, ctx).await?;
     tracing::info!(%addr, chain_id = cfg.chain_id, genesis = %chain.genesis_hash(), "JSON-RPC listening");
 
-    if let Some(addr) = args.explorer {
-        let certs = args.certificates.map(|a| {
-            Arc::new(crate::certificates::Certs::new(
-                a,
-                args.cafeca_wallet.clone(),
-                None,
-                Some(args.datadir.join("cert-uploads.json")),
-            ))
-        });
-        crate::explorer::spawn_address_index(chain.clone())?;
-        let ex = crate::explorer::Explorer {
-            chain: chain.clone(),
-            pool: Some(pool.clone()),
-            certs: certs.clone(),
-            host: None,
-        };
-        crate::explorer::start(addr, ex).await?;
-    }
-
     let net = if args.no_p2p {
         None
     } else {
@@ -121,6 +106,29 @@ pub async fn run(args: DevnetArgs) -> Result<()> {
         });
         Some(net)
     };
+
+    if let Some(addr) = args.explorer {
+        let certs = args.certificates.map(|a| {
+            Arc::new(crate::certificates::Certs::new(
+                a,
+                args.cafeca_wallet.clone(),
+                None,
+                Some(args.datadir.join("cert-uploads.json")),
+            ))
+        });
+        crate::explorer::spawn_address_index(chain.clone())?;
+        if let Some(f) = &args.geoip {
+            crate::explorer::load_geoip(f)?;
+        }
+        let ex = crate::explorer::Explorer {
+            chain: chain.clone(),
+            pool: Some(pool.clone()),
+            certs: certs.clone(),
+            host: None,
+            net: net.clone(),
+        };
+        crate::explorer::start(addr, ex).await?;
+    }
 
     let block_time = Duration::from_secs(args.block_time.unwrap_or(cfg.slot_seconds).max(1));
     let producer = {

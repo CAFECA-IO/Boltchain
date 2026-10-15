@@ -10,8 +10,10 @@
 //!   with `relay_server` relay for others; a node found to be behind NAT reserves a slot on up to
 //!   two relay-capable peers and is reachable through them) and DCUtR hole punching, which
 //!   upgrades relayed connections to direct ones when the NATs allow it.
+//! * Node census: heartbeats on `/bolt/<chain id>/nodes` and identify (see [`nodes`]).
 
 pub mod bitswap;
+pub mod nodes;
 
 use alloy_primitives::B256;
 use bitswap::{Bitswap, BlockSource, FetchError};
@@ -125,6 +127,9 @@ pub struct NetConfig {
     pub fork_check: Option<ForkCheck>,
     /// Relay connections for peers behind NAT (public nodes).
     pub relay_server: bool,
+    /// Software name and version advertised to peers and in heartbeats, e.g.
+    /// `boltchain/v0.1.0-c01aee5` (empty: `boltchain/<crate version>`).
+    pub agent: String,
 }
 
 /// Verdict on a peer's fork id.
@@ -243,6 +248,7 @@ pub struct NetHandle {
     cmd: mpsc::Sender<Command>,
     bitswap: Bitswap,
     peer_id: PeerId,
+    book: nodes::NodeBook,
 }
 
 impl std::fmt::Debug for Command {
@@ -267,6 +273,11 @@ impl NetHandle {
     /// This node's peer id.
     pub fn peer_id(&self) -> PeerId {
         self.peer_id
+    }
+
+    /// Nodes online: this one, its peers and those whose heartbeats arrived (see [`nodes`]).
+    pub fn nodes(&self) -> Vec<nodes::NodeRecord> {
+        self.book.nodes()
     }
 
     /// Publishes an announcement.
@@ -374,6 +385,20 @@ fn storage_topic(chain_id: u64) -> gossipsub::IdentTopic {
     gossipsub::IdentTopic::new(format!("/bolt/{chain_id}/storage"))
 }
 
+fn nodes_topic(chain_id: u64) -> gossipsub::IdentTopic {
+    gossipsub::IdentTopic::new(format!("/bolt/{chain_id}/nodes"))
+}
+
+/// Agent string: software and version, then the fork id.
+fn agent_string(cfg: &NetConfig) -> String {
+    let sw = if cfg.agent.is_empty() {
+        format!("boltchain/{}", env!("CARGO_PKG_VERSION"))
+    } else {
+        cfg.agent.clone()
+    };
+    format!("{sw} fork/{}", cfg.fork_id)
+}
+
 /// Behind NAT: listen through relay-capable peers (up to [`MAX_RELAYS`]).
 fn listen_via_relays(
     swarm: &mut Swarm<Behaviour>,
@@ -465,7 +490,7 @@ pub async fn start(
 ) -> Result<(NetHandle, mpsc::Receiver<NetEvent>), NetError> {
     let setup = |e: &dyn std::fmt::Display| NetError::Setup(e.to_string());
     let chain_id = cfg.chain_id;
-    let fork_id = cfg.fork_id.clone();
+    let agent = agent_string(&cfg);
     let relay_server = cfg.relay_server;
     let kad_protocol = StreamProtocol::try_from_owned(format!("/bolt/{chain_id}/kad/1.0.0"))
         .map_err(|e| setup(&e))?;
@@ -515,11 +540,7 @@ pub async fn start(
                 Ok(Behaviour {
                     identify: identify::Behaviour::new(
                         identify::Config::new(format!("/bolt/{chain_id}/1.0.0"), key.public())
-                            .with_agent_version(format!(
-                                "boltchain/{} fork/{}",
-                                env!("CARGO_PKG_VERSION"),
-                                fork_id
-                            )),
+                            .with_agent_version(agent.clone()),
                     ),
                     ping: ping::Behaviour::default(),
                     kad,
@@ -571,6 +592,7 @@ pub async fn start(
     swarm.behaviour_mut().gossipsub.subscribe(&consensus_topic(chain_id)).map_err(|e| setup(&e))?;
     swarm.behaviour_mut().gossipsub.subscribe(&storage_topic(chain_id)).map_err(|e| setup(&e))?;
     swarm.behaviour_mut().gossipsub.subscribe(&tx_topic(chain_id)).map_err(|e| setup(&e))?;
+    swarm.behaviour_mut().gossipsub.subscribe(&nodes_topic(chain_id)).map_err(|e| setup(&e))?;
     for addr in &cfg.bootnodes {
         if let Some(peer) = peer_of(addr) {
             swarm.behaviour_mut().kad.add_address(&peer, addr.clone());
@@ -584,8 +606,9 @@ pub async fn start(
     let peer_id = *swarm.local_peer_id();
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
     let (ev_tx, ev_rx) = mpsc::channel(EVENT_BUFFER);
-    tokio::spawn(run(swarm, cfg, kad_protocol, cmd_rx, cmd_tx.clone(), ev_tx));
-    Ok((NetHandle { cmd: cmd_tx, bitswap, peer_id }, ev_rx))
+    let book = nodes::NodeBook::default();
+    tokio::spawn(run(swarm, cfg, kad_protocol, cmd_rx, cmd_tx.clone(), ev_tx, book.clone()));
+    Ok((NetHandle { cmd: cmd_tx, bitswap, peer_id, book }, ev_rx))
 }
 
 async fn run(
@@ -595,8 +618,20 @@ async fn run(
     mut cmd_rx: mpsc::Receiver<Command>,
     cmd_tx: mpsc::Sender<Command>,
     ev_tx: mpsc::Sender<NetEvent>,
+    book: nodes::NodeBook,
 ) {
     let topic = topic(cfg.chain_id);
+    let ntopic = nodes_topic(cfg.chain_id);
+    let agent = agent_string(&cfg);
+    // Census: our first heartbeat goes out once peers know our addresses, then every 10 minutes.
+    let mut heartbeat_tick = tokio::time::interval_at(
+        tokio::time::Instant::now() + Duration::from_secs(if cfg!(test) { 3 } else { 30 }),
+        if cfg!(test) { Duration::from_secs(3) } else { nodes::HEARTBEAT },
+    );
+    // Public IP of our connection to each peer, and public addresses peers observe us at.
+    let mut conn_ip: HashMap<PeerId, std::net::IpAddr> = HashMap::new();
+    let mut observed: HashMap<Multiaddr, std::time::Instant> = HashMap::new();
+    let mut heard: HashMap<PeerId, u32> = HashMap::new();
     let ctopic = consensus_topic(cfg.chain_id);
     let stopic = storage_topic(cfg.chain_id);
     let ttopic = tx_topic(cfg.chain_id);
@@ -656,6 +691,29 @@ async fn run(
                         swarm.close_connection(id);
                     }
                 }
+            }
+            _ = heartbeat_tick.tick() => {
+                let now = std::time::Instant::now();
+                observed.retain(|_, t| now.duration_since(*t) < Duration::from_secs(3600));
+                let mut addrs: Vec<Multiaddr> = swarm.external_addresses().cloned().collect();
+                addrs.extend(observed.keys().cloned());
+                addrs.retain(|a| nodes::public_ip(a).is_some());
+                addrs.sort();
+                addrs.dedup();
+                addrs.truncate(8);
+                let local = *swarm.local_peer_id();
+                book.set_local(local, &agent, &addrs);
+                let info = nodes::NodeInfo {
+                    v: 1,
+                    peer: serde_bytes::ByteBuf::from(local.to_bytes()),
+                    agent: agent.clone(),
+                    addrs: addrs.iter().map(|a| serde_bytes::ByteBuf::from(a.to_vec())).collect(),
+                    at: nodes::now_secs(),
+                };
+                if let Err(e) = swarm.behaviour_mut().gossipsub.publish(ntopic.clone(), info.encode()) {
+                    tracing::debug!("node heartbeat: {e}");
+                }
+                heard.clear();
             }
             _ = bootstrap_tick.tick() => {
                 let _ = swarm.behaviour_mut().kad.bootstrap();
@@ -776,6 +834,8 @@ async fn run(
                         continue;
                     }
                     reach.remove(&peer_id);
+                    conn_ip.remove(&peer_id);
+                    book.disconnected(&peer_id);
                     chain_peers.remove(&peer_id);
                     if redial.remove(&peer_id) {
                         let _ = swarm.dial(peer_id);
@@ -790,6 +850,9 @@ async fn run(
                         ConnInfo { relayed, opened: std::time::Instant::now(), last_pong: None },
                     );
                     reach.insert(peer_id, addr_scope(endpoint.get_remote_address()));
+                    if let Some(ip) = nodes::public_ip(endpoint.get_remote_address()) {
+                        conn_ip.insert(peer_id, ip);
+                    }
                     if num_established.get() == 1 {
                         deliver(&ev_tx, NetEvent::Connected(peer_id));
                     }
@@ -821,6 +884,16 @@ async fn run(
                         PeerRules::Compatible => {}
                     }
                     chain_peers.entry(peer_id).or_insert_with(std::time::Instant::now);
+                    book.observe_peer(peer_id, &info.agent_version, conn_ip.get(&peer_id).copied(), &info.listen_addrs);
+                    if nodes::public_ip(&info.observed_addr).is_some() {
+                        observed.insert(info.observed_addr.clone(), std::time::Instant::now());
+                        if observed.len() > 32 {
+                            let oldest = observed.iter().min_by_key(|(_, t)| **t).map(|(a, _)| a.clone());
+                            if let Some(a) = oldest {
+                                observed.remove(&a);
+                            }
+                        }
+                    }
                     if info.protocols.iter().any(|p| p.as_ref() == RELAY_HOP)
                         && let Some(a) = info.listen_addrs.iter().find(|a| {
                             addr_scope(a) == Scope::Public
@@ -874,6 +947,22 @@ async fn run(
                     if ok {
                         deliver(&ev_tx, NetEvent::GossipTx { raw: message.data });
                     }
+                }
+                SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
+                    propagation_source, message_id, message,
+                })) if message.topic == ntopic.hash() => {
+                    // Heartbeats: one per author per two minutes; a relaying peer may pass on a
+                    // bounded number between our own heartbeats.
+                    let n = heard.entry(propagation_source).or_insert(0);
+                    *n += 1;
+                    let ok = *n <= nodes::MAX_NODES as u32 / 4
+                        && message.source.is_some_and(|author| {
+                            nodes::NodeInfo::decode(&message.data).is_some_and(|i| book.heartbeat(author, &i))
+                        });
+                    let _ = swarm.behaviour_mut().gossipsub.report_message_validation_result(
+                        &message_id, &propagation_source,
+                        if ok { gossipsub::MessageAcceptance::Accept } else { gossipsub::MessageAcceptance::Ignore },
+                    );
                 }
                 SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
                     propagation_source, message_id, message,

@@ -76,6 +76,7 @@ impl P2pArgs {
             fork_id: fork_id.to_string(),
             fork_check: Some(fork_check),
             relay_server: self.relay_server,
+            agent: crate::CLIENT_VERSION.to_string(),
         };
         let (net, events) = bolt_net::start(cfg, Arc::new(ChainBlocks(chain))).await?;
         tracing::info!(peer_id = %net.peer_id(), "p2p identity");

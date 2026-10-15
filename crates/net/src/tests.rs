@@ -43,6 +43,7 @@ async fn node_with_fork(
             fork_id: fork.to_string(),
             fork_check: Some(check),
             relay_server: false,
+            agent: String::new(),
         },
         mem.clone(),
     )
@@ -235,6 +236,7 @@ async fn relayed_node_serves_blocks() {
                 fork_id: "aabbccdd-0".into(),
                 fork_check: None,
                 relay_server,
+                agent: String::new(),
             },
             mem.clone(),
         )
@@ -316,6 +318,7 @@ async fn connections_do_not_accumulate() {
                 fork_id: "aabbccdd-0".into(),
                 fork_check: None,
                 relay_server: i == 0,
+                agent: String::new(),
             },
             Arc::new(Mem::default()),
         )
@@ -340,4 +343,55 @@ async fn connections_do_not_accumulate() {
     // 4 nodes, at most one connection per pair (2 sockets each in this process).
     let last = *counts.last().unwrap();
     assert!(last <= 12, "connections accumulate: {counts:?}");
+}
+
+/// The census: A–B–C in a line; A learns C (not connected) from C's heartbeat, with versions.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn nodes_learn_each_other_from_heartbeats() {
+    let start_node = |boot: Vec<Multiaddr>, agent: &str| {
+        let agent = agent.to_string();
+        async move {
+            start(
+                NetConfig {
+                    chain_id: 1337,
+                    keypair: identity::Keypair::generate_ed25519(),
+                    listen: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
+                    bootnodes: boot,
+                    producer: None,
+                    fork_id: "aabbccdd-0".into(),
+                    fork_check: None,
+                    relay_server: false,
+                    agent,
+                },
+                Arc::new(Mem::default()),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let addr = |h: NetHandle| async move {
+        loop {
+            if let Some(a) = h.listen_addrs().await.into_iter().next() {
+                return a;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    let (a, _ra) = start_node(vec![], "boltchain/v9-a").await;
+    let (b, _rb) = start_node(vec![addr(a.clone()).await], "boltchain/v9-b").await;
+    let (c, _rc) = start_node(vec![addr(b.clone()).await], "boltchain/v9-c").await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let n = a.nodes();
+        let v = |p: PeerId| n.iter().find(|r| r.peer == p).map(|r| r.version.clone());
+        if v(a.peer_id()).as_deref() == Some("boltchain/v9-a")
+            && v(b.peer_id()).as_deref() == Some("boltchain/v9-b")
+            && v(c.peer_id()).as_deref() == Some("boltchain/v9-c")
+        {
+            assert!(n.iter().find(|r| r.peer == b.peer_id()).unwrap().direct);
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "census incomplete: {n:?}");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
 }
