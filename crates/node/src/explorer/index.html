@@ -215,6 +215,21 @@ footer.wrap { color: var(--muted); font-size: 12px; padding: 20px 16px 32px; bor
 .ver-row { padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .ver-h { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
 @media (max-width: 560px) { #globe { height: 300px; } }
+.jform { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 20px; }
+.jf-fields { display: grid; gap: 14px; align-content: start; }
+.jf { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.jf > span { font-size: 13px; font-weight: 600; color: var(--muted); }
+.jf-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.jf-pair label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.jf-pair small { font-size: 12px; color: var(--muted); }
+.jform input, .jform select, .jform textarea { width: 100%; min-width: 0; border: 1px solid var(--line); background: var(--panel2); color: var(--text); border-radius: 8px; padding: 9px 11px; font: 14px -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC", sans-serif; outline: none; }
+.jform input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.jform select { appearance: none; padding-right: 32px; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+.jform input:focus, .jform select:focus, .jform textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.jform select:disabled { color: var(--muted); opacity: .8; }
+.jf-prompt { height: 100%; } .jf-prompt textarea { flex: 1; min-height: 200px; resize: vertical; line-height: 1.5; }
+.jf-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
+@media (max-width: 760px) { .jform { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -1445,17 +1460,23 @@ function renderPost(cfg, d) {
   const box = document.getElementById("jpost");
   if (!box) return;
   const provs = d.providers.filter((p) => p.registered && !p.exitEpoch && p.encKey !== "0x" + "0".repeat(64));
+  const reason = !d.models.length ? tr("尚無已登記的模型（請先用 boltchain model register 登記）", "No model registered yet (register one with boltchain model register)")
+    : !provs.length ? tr("目前沒有可指定的執行者（可用 CLI 發出開放工作）", "No provider to address yet (the CLI can post open jobs)") : "";
+  const opt = (items, none) => (items.length ? items.join("") : `<option value="">${esc(none)}</option>`);
   box.innerHTML = `
-    <div class="grid two"><div>
-      <label>${tr("模型", "Model")}<select id="jmodel">${d.models.map((m) => `<option value="${m.id}">${m.id} · ${esc(m.name)}</option>`).join("")}</select></label>
-      <label>${tr("執行者", "Provider")}<select id="jprov">${provs.map((p) => `<option value="${p.address}">${short(p.address, 10, 8)} · ${p.jobsDone} ${tr("件完成", "done")}</option>`).join("")}</select></label>
-      <label>${tr("每千 token 價格（輸入 / 輸出, BOLT）", "Price per 1k tokens (in / out, BOLT)")}<span style="display:flex;gap:8px"><input id="jpin" value="0.01"><input id="jpout" value="0.03"></span></label>
-      <label>${tr("上限 token（輸入 / 輸出）", "Token limits (in / out)")}<span style="display:flex;gap:8px"><input id="jmin" value="2000"><input id="jmout" value="1000"></span></label>
-    </div><div>
-      <label>${tr("提示", "Prompt")}<textarea id="jprompt" rows="8" placeholder="${esc(tr("在瀏覽器內加密後才上傳", "Encrypted in your browser before upload"))}"></textarea></label>
-    </div></div>
-    <div style="margin-top:10px;display:flex;gap:10px;align-items:center"><button class="btn acc" id="jgo" ${jstate.busy || !d.models.length || !provs.length ? "disabled" : ""}>${tr("以 CAFECA 付款並發出", "Pay with CAFECA and post")}</button><span class="hint" id="jst">${esc(jstate.status || (provs.length ? "" : tr("目前沒有可指定的執行者（可用 CLI 發出開放工作）", "No provider to address yet (the CLI can post open jobs)")))}</span></div>
-    <div class="hint" style="margin-top:6px">${tr("解密金鑰保存在此瀏覽器；清除網站資料後就無法讀取結果。", "The decryption key stays in this browser; clearing site data loses access to results.")}</div>`;
+    <div class="jform">
+      <div class="jf-fields">
+        <label class="jf"><span>${tr("模型", "Model")}</span><select id="jmodel" ${d.models.length ? "" : "disabled"}>${opt(d.models.map((m) => `<option value="${m.id}">${m.id} · ${esc(m.name)}</option>`), tr("尚無模型", "No models"))}</select></label>
+        <label class="jf"><span>${tr("執行者", "Provider")}</span><select id="jprov" ${provs.length ? "" : "disabled"}>${opt(provs.map((p) => `<option value="${p.address}">${short(p.address, 10, 8)} · ${p.jobsDone} ${tr("件完成", "done")}</option>`), tr("尚無執行者", "No providers"))}</select></label>
+        <div class="jf"><span>${tr("每千 token 價格（BOLT）", "Price per 1k tokens (BOLT)")}</span>
+          <div class="jf-pair"><label><small>${tr("輸入", "Input")}</small><input id="jpin" inputmode="decimal" value="0.01"></label><label><small>${tr("輸出", "Output")}</small><input id="jpout" inputmode="decimal" value="0.03"></label></div></div>
+        <div class="jf"><span>${tr("token 上限", "Token limits")}</span>
+          <div class="jf-pair"><label><small>${tr("輸入", "Input")}</small><input id="jmin" inputmode="numeric" value="2000"></label><label><small>${tr("輸出", "Output")}</small><input id="jmout" inputmode="numeric" value="1000"></label></div></div>
+      </div>
+      <label class="jf jf-prompt"><span>${tr("提示", "Prompt")}</span><textarea id="jprompt" rows="9" placeholder="${esc(tr("在瀏覽器內加密後才上傳", "Encrypted in your browser before upload"))}"></textarea></label>
+    </div>
+    <div class="jf-actions"><button class="btn acc" id="jgo" ${jstate.busy || reason ? "disabled" : ""}>${tr("以 CAFECA 付款並發出", "Pay with CAFECA and post")}</button><span class="hint" id="jst">${esc(jstate.status || reason)}</span></div>
+    <div class="hint" style="margin-top:8px">${tr("解密金鑰保存在此瀏覽器；清除網站資料後就無法讀取結果。", "The decryption key stays in this browser; clearing site data loses access to results.")}</div>`;
   const go = document.getElementById("jgo");
   if (go) go.onclick = () => postJob(cfg, d);
 }
@@ -1637,7 +1658,8 @@ const regionNames = {};
 function countryName(code) {
   if (!code) return tr("未知", "Unknown");
   const l = lang === "zh" ? "zh-TW" : "en";
-  try { regionNames[l] = regionNames[l] || new Intl.DisplayNames([l], { type: "region" }); return regionNames[l].of(code) || code; } catch (_) { return code; }
+  if (lang === "zh" && code === "TW") return "臺灣";
+  try { regionNames[l] = regionNames[l] || new Intl.DisplayNames([l], { type: "region" }); return (regionNames[l].of(code) || code).replace(/^台灣$/, "臺灣"); } catch (_) { return code; }
 }
 const flag = (code) => (code && /^[A-Z]{2}$/.test(code) ? String.fromCodePoint(...[...code].map((c) => 0x1f1a5 + c.charCodeAt(0))) : "🌐");
 const shortVer = (v) => String(v || "?").replace(/^boltchain\//, "");
