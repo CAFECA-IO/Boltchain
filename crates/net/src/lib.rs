@@ -632,6 +632,8 @@ async fn run(
     let mut conn_ip: HashMap<PeerId, std::net::IpAddr> = HashMap::new();
     let mut observed: HashMap<Multiaddr, std::time::Instant> = HashMap::new();
     let mut heard: HashMap<PeerId, u32> = HashMap::new();
+    // Count ourselves from the start (addresses follow with the first heartbeat).
+    book.set_local(*swarm.local_peer_id(), &agent, &[]);
     let ctopic = consensus_topic(cfg.chain_id);
     let stopic = storage_topic(cfg.chain_id);
     let ttopic = tx_topic(cfg.chain_id);
