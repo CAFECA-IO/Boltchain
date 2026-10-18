@@ -94,6 +94,11 @@ pub async fn run(
                 continue;
             }
         };
+        // transactions that can never execute leave the pool (see validator::propose)
+        let invalid: Vec<_> = template.rejected.iter().filter(|r| r.2).map(|r| r.0).collect();
+        if !invalid.is_empty() {
+            pool.remove(&invalid);
+        }
         let key = chain.seal_key(&parent, head.number + 1)?;
         let seal = bolt_pow::seal_hash(&template.header);
         let difficulty = template.header.difficulty;

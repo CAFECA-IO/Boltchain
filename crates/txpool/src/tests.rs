@@ -138,3 +138,32 @@ fn calldata_floor_and_intrinsic_gas_are_checked_at_admission() {
         Err(AddError::IntrinsicGas(n)) if n > 53_000
     ));
 }
+
+#[test]
+fn stuck_transactions_are_evicted_so_the_sender_can_continue() {
+    let k = PrivateKeySigner::random();
+    let p = pool();
+    let mut st = rich(&[&k]);
+    let fee = 2 * MIN_FEE as u128;
+    // 16 queued behind a head transaction that never executes: the next nonce is refused
+    for n in 0..16 {
+        p.add(tx(&k, n, 1, fee), &st).unwrap();
+    }
+    assert_eq!(p.add(tx(&k, 16, 1, fee), &st), Err(AddError::NonceTooHigh));
+    assert_eq!(p.pending_nonce(&k.address(), 0), 16);
+
+    // too old: everything goes, and the pending nonce is the account nonce again
+    p.evict(&st, Instant::now() + p.cfg.max_age + Duration::from_secs(1));
+    assert!(p.is_empty());
+    assert_eq!(p.pending_nonce(&k.address(), 0), 0);
+
+    // the next transaction is no longer affordable: it goes, later ones wait behind the gap
+    for n in 0..3 {
+        p.add(tx(&k, n, 1, fee), &st).unwrap();
+    }
+    st.0.insert(k.address(), (0, U256::from(1)));
+    p.on_new_block(&st);
+    assert_eq!(p.len(), 2);
+    assert_eq!(p.pending_nonce(&k.address(), 0), 0, "the sender can resend nonce 0");
+    assert!(p.best(MIN_FEE, &st).is_empty());
+}

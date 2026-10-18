@@ -5,6 +5,12 @@
 //! nonce not below the account nonce, balance covering the maximum cost, at most
 //! [`PoolConfig::max_per_sender`] transactions per sender, and a 10% tip bump to replace.
 //!
+//! Eviction (at every new block): transactions below the account nonce (included), transactions
+//! older than [`PoolConfig::max_age`], and a sender's next transaction once the balance no longer
+//! covers it. A transaction that never executes would otherwise stay forever: the sender's later
+//! nonces queue behind it until the per-sender limit refuses new ones ("nonce too high"), and the
+//! "pending" nonce keeps counting transactions that will never be mined.
+//!
 //! From M2 the node forwards admitted transactions to the next few slot leaders instead of
 //! flooding them over gossip.
 
@@ -16,6 +22,7 @@ use std::{
     cmp::Reverse,
     collections::{BTreeMap, BinaryHeap, HashMap},
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 /// EIP-7825 per-transaction gas cap.
@@ -41,6 +48,8 @@ pub struct PoolConfig {
     pub max_per_sender: usize,
     /// Required tip increase to replace a transaction, in percent.
     pub price_bump_pct: u128,
+    /// Transactions not included within this time are dropped.
+    pub max_age: Duration,
 }
 
 impl PoolConfig {
@@ -54,6 +63,7 @@ impl PoolConfig {
             max_bytes: 16 << 20,
             max_per_sender: 16,
             price_bump_pct: 10,
+            max_age: Duration::from_secs(3 * 3600),
         }
     }
 }
@@ -120,6 +130,8 @@ pub struct PooledTx {
     pub hash: B256,
     /// Encoded size.
     pub size: usize,
+    /// When the pool admitted it.
+    pub admitted: Instant,
 }
 
 impl PooledTx {
@@ -128,6 +140,9 @@ impl PooledTx {
     }
     fn tip(&self, base_fee: u64) -> Option<u128> {
         self.tx.effective_tip_per_gas(base_fee)
+    }
+    fn max_cost(&self) -> U256 {
+        U256::from(self.tx.gas_limit()) * U256::from(self.tx.max_fee_per_gas()) + self.tx.value()
     }
 }
 
@@ -259,7 +274,9 @@ impl TxPool {
         }
         inner.bytes += size;
         inner.by_sender.entry(sender).or_default().insert(nonce, hash);
-        inner.by_hash.insert(hash, Arc::new(PooledTx { tx, sender, hash, size }));
+        inner
+            .by_hash
+            .insert(hash, Arc::new(PooledTx { tx, sender, hash, size, admitted: Instant::now() }));
         bolt_primitives::metrics::TXS_ADMITTED.inc();
         Ok(hash)
     }
@@ -303,14 +320,28 @@ impl TxPool {
         out
     }
 
-    /// Drops transactions that are now included or stale.
+    /// Drops transactions that are now included, expired, or no longer affordable (see the
+    /// module docs).
     pub fn on_new_block(&self, state: &impl AccountState) {
+        self.evict(state, Instant::now());
+    }
+
+    fn evict(&self, state: &impl AccountState, now: Instant) {
         let mut inner = self.inner.lock();
         let senders: Vec<Address> = inner.by_sender.keys().copied().collect();
         for s in senders {
-            let nonce = state.nonce_balance(&s).0;
-            let stale: Vec<B256> = inner.by_sender[&s].range(..nonce).map(|(_, h)| *h).collect();
-            for h in stale {
+            let (nonce, balance) = state.nonce_balance(&s);
+            let mut drop: Vec<B256> = Vec::new();
+            for (n, h) in &inner.by_sender[&s] {
+                let p = &inner.by_hash[h];
+                let expired = now.saturating_duration_since(p.admitted) > self.cfg.max_age;
+                // the next one to execute: it can only run if the balance still covers it
+                let unaffordable = *n == nonce && p.max_cost() > balance;
+                if *n < nonce || expired || unaffordable {
+                    drop.push(*h);
+                }
+            }
+            for h in drop {
                 inner.remove(&h);
             }
         }

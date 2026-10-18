@@ -1273,6 +1273,15 @@ async fn propose(
         chain2.build_on(&parent_hash, candidates, timestamp, fee_recipient, extra, cert)
     })
     .await??;
+    // Transactions that can never execute leave the pool; otherwise every proposal would retry
+    // them and the sender's later nonces would queue behind them for good.
+    let invalid: Vec<_> = built.rejected.iter().filter(|r| r.2).map(|r| r.0).collect();
+    if !invalid.is_empty() {
+        for (h, why, _) in built.rejected.iter().filter(|r| r.2) {
+            tracing::debug!(tx = %h, reason = %why, "dropping invalid transaction");
+        }
+        pool.remove(&invalid);
+    }
     let payload = bolt_sync::announce_for(&built.bundle).encode();
     Ok((
         BlockInfo { hash: built.hash, parent: qc.block, round, height: built.header.number },

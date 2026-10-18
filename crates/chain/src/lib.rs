@@ -76,6 +76,22 @@ pub struct BuiltBlock {
     pub bundle: BlockBundle,
 }
 
+/// Whether a transaction rejected while building a block can never be included as it is, so the
+/// pool should drop it. Nonce mismatches are not: a nonce too low was included by an ancestor the
+/// pool's head does not have yet (it is dropped when that block arrives), and a nonce too high
+/// may become valid once the gap before it is filled.
+pub fn is_permanent(e: &TxRejection) -> bool {
+    use revm::context_interface::result::InvalidTransaction as I;
+    match e {
+        TxRejection::Blob => true,
+        TxRejection::Invalid(I::NonceTooHigh { .. } | I::NonceTooLow { .. }) => false,
+        // a fee cap below this block's base fee may be enough for a later block
+        TxRejection::Invalid(I::GasPriceLessThanBasefee) => false,
+        TxRejection::Invalid(_) => true,
+        _ => false,
+    }
+}
+
 /// The chain.
 #[derive(Debug)]
 pub struct Chain {
@@ -723,7 +739,7 @@ impl Chain {
                         return Err(ChainError::InvalidBlock(format!("tx {hash}: {e}")));
                     }
                     Err(e) => {
-                        let permanent = matches!(e, TxRejection::Invalid(_) | TxRejection::Blob);
+                        let permanent = is_permanent(&e);
                         rejected.push((hash, e.to_string(), permanent));
                     }
                 }
@@ -1221,3 +1237,24 @@ mod history_tests;
 mod pow_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod permanent_tests {
+    use super::{TxRejection, is_permanent};
+    use alloy_primitives::U256;
+    use revm::context_interface::result::InvalidTransaction as I;
+
+    #[test]
+    fn only_rejections_that_can_never_pass_are_permanent() {
+        let funds = I::LackOfFundForMaxFee {
+            fee: Box::new(U256::from(2)),
+            balance: Box::new(U256::from(1)),
+        };
+        assert!(is_permanent(&TxRejection::Invalid(funds)));
+        assert!(is_permanent(&TxRejection::Blob));
+        assert!(!is_permanent(&TxRejection::Invalid(I::NonceTooHigh { tx: 5, state: 3 })));
+        assert!(!is_permanent(&TxRejection::Invalid(I::NonceTooLow { tx: 2, state: 3 })));
+        assert!(!is_permanent(&TxRejection::Invalid(I::GasPriceLessThanBasefee)));
+        assert!(!is_permanent(&TxRejection::BlockSize));
+    }
+}
