@@ -102,24 +102,52 @@ impl Explorer {
         let requester: Option<Address> =
             crate::explorer::query_param(query, "requester").and_then(|a| a.parse().ok());
         let mut jobs = Vec::new();
-        let mut providers: Vec<Address> = Vec::new();
+        let mut providers: Vec<Address> = self.registered_providers(r);
+        // Recent prices per model (for the page's suggested prices).
+        let mut prices: std::collections::HashMap<u64, (Vec<u128>, Vec<u128>)> = Default::default();
         for id in (count.saturating_sub(SCAN)..count).rev() {
             let j = self.v(r, COMPUTE, IComputeMarket::jobCall { id: U256::from(id) })?;
             if j.provider != Address::ZERO && !providers.contains(&j.provider) {
                 providers.push(j.provider);
             }
+            if matches!(j.state, 3 | 5) {
+                let e = prices.entry(j.model).or_default();
+                if e.0.len() < 50 {
+                    e.0.push(j.priceIn);
+                    e.1.push(j.priceOut);
+                }
+            }
             if (jobs.len() as u64) < want && requester.is_none_or(|a| a == j.requester) {
                 jobs.push(self.job_json(id, &j));
             }
         }
+        let median = |v: &mut Vec<u128>| -> Option<String> {
+            v.sort_unstable();
+            v.get(v.len() / 2).map(|x| x.to_string())
+        };
+        for m in models.iter_mut() {
+            let id = m["id"].as_u64().unwrap_or(0);
+            if let Some((pi, po)) = prices.get_mut(&id) {
+                m["priceIn"] = json!(median(pi));
+                m["priceOut"] = json!(median(po));
+            }
+        }
+        let model_ids: Vec<u64> = models.iter().filter_map(|m| m["id"].as_u64()).collect();
         let mut provs = Vec::new();
         for p in providers {
             let i = self.v(r, COMPUTE, IComputeMarket::providerCall { p })?;
             let key = self.v(r, COMPUTE, IComputeMarket::encryptionKeyCall { account: p })?;
+            let mut serves = Vec::new();
+            for id in &model_ids {
+                if self.v(r, MODELS, IModelRegistry::servesCall { id: *id, provider: p })? {
+                    serves.push(*id);
+                }
+            }
+            let limit = self.v(r, COMPUTE, IComputeMarket::jobLimitCall { p })?;
             provs.push(json!({
                 "address": p, "registered": i.registered, "bond": i.bond.to_string(),
                 "jobsDone": i.jobsDone, "faults": i.faults, "exitEpoch": i.exitEpoch,
-                "encKey": key,
+                "encKey": key, "models": serves, "jobLimit": limit.to_string(),
             }));
         }
         let disputes = self.v(r, COMPUTE, IComputeMarket::pendingDisputesCall {})?.len();
@@ -127,6 +155,47 @@ impl Explorer {
             "enabled": true, "contract": COMPUTE, "models": models, "jobs": jobs,
             "providers": provs, "jobCount": count, "pendingDisputes": disputes,
         }))
+    }
+
+    /// Accounts that registered as providers or declared a model, from the address index (the
+    /// most recent transactions to `ComputeMarket` and `ModelRegistry`).
+    fn registered_providers(&self, r: &Tx<'_, RO>) -> Vec<Address> {
+        use alloy_consensus::Transaction as _;
+        let mut out: Vec<Address> = Vec::new();
+        if r.address_index_from().ok().flatten().is_none() {
+            return out;
+        }
+        let reg = IComputeMarket::registerCall::SELECTOR;
+        let reg_for = IComputeMarket::registerForCall::SELECTOR;
+        let support = IModelRegistry::setSupportCall::SELECTOR;
+        for contract in [COMPUTE, MODELS] {
+            let Ok(entries) = r.address_txs(&contract, None, 2000) else { continue };
+            for e in entries {
+                let Ok(Some(b)) = r.block(e.block) else { continue };
+                let Some(tx) = b.transactions.get(e.index as usize) else { continue };
+                if tx.to() != Some(contract) {
+                    continue;
+                }
+                let input = tx.input();
+                if input.len() < 4 {
+                    continue;
+                }
+                let sel: [u8; 4] = input[..4].try_into().expect("4 bytes");
+                let who = if sel == reg || sel == support {
+                    b.senders.get(e.index as usize).copied()
+                } else if sel == reg_for {
+                    IComputeMarket::registerForCall::abi_decode(input).ok().map(|c| c.provider_)
+                } else {
+                    None
+                };
+                if let Some(a) = who
+                    && !out.contains(&a)
+                {
+                    out.push(a);
+                }
+            }
+        }
+        out
     }
 
     /// `GET /api/compute/job/<id>`.
@@ -151,6 +220,8 @@ impl Explorer {
             let m = self.v(r, MODELS, IModelRegistry::modelCall { id: j.model })?;
             out["modelName"] = json!(m.name);
         }
+        let bal = self.v(r, COMPUTE, IComputeMarket::balanceOfCall { account: j.requester })?;
+        out["requesterBalance"] = json!(bal.to_string());
         Ok(out)
     }
 

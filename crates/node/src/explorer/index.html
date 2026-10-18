@@ -251,6 +251,57 @@ footer.wrap { color: var(--muted); font-size: 12px; padding: 20px 16px 32px; bor
 @media (max-width: 760px) { .jform { grid-template-columns: 1fr; } }
 svg.mag { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
 .hero svg.mag { width: 21px; height: 21px; }
+.ask { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 24px; padding: 16px; }
+.ask-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ask-model { font-size: 14px; }
+.chips-pick { display: flex; flex-wrap: wrap; gap: 8px; }
+.pick { border: 1px solid var(--line); background: var(--panel2); color: var(--text); border-radius: 999px; padding: 6px 14px; font: 600 13px/1.3 inherit; cursor: pointer; }
+.pick:hover { border-color: var(--accent); }
+.pick.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.ask textarea, .ask input, .ask select { width: 100%; min-width: 0; border: 1px solid var(--line); background: var(--panel2); color: var(--text); border-radius: 10px; padding: 9px 11px; font: 14px -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC", sans-serif; outline: none; }
+.ask textarea { min-height: 150px; resize: vertical; line-height: 1.6; font-size: 15px; padding: 12px 14px; }
+.ask input { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.ask select { appearance: none; padding-right: 32px; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+.ask textarea:focus, .ask input:focus, .ask select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+details.adv { border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; }
+details.adv[open] { padding-bottom: 12px; }
+details.adv summary, details.adv-card summary { cursor: pointer; padding: 10px 0; font-size: 13px; font-weight: 600; list-style: none; }
+details.adv summary::-webkit-details-marker, details.adv-card summary::-webkit-details-marker { display: none; }
+details.adv summary::before, details.adv-card summary::before { content: "›"; display: inline-block; width: 14px; transition: transform .15s; color: var(--muted); }
+details[open] > summary::before { transform: rotate(90deg); }
+details.adv summary .muted { font-weight: 400; }
+details.adv-card summary { padding: 14px 16px; font-size: 15px; }
+details.adv-card[open] summary { border-bottom: 1px solid var(--line); }
+.adv-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ask-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ask-cost { font-size: 14px; }
+.btn.big { padding: 10px 22px; font-size: 15px; font-weight: 700; border-radius: 10px; }
+.ask-status { font-size: 13px; color: var(--muted); min-height: 1em; }
+.ask-status.bad { color: var(--bad); }
+.ask-steps { list-style: none; margin: 0; padding: 0 0 0 20px; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 16px; align-self: start; }
+.ask-steps li { display: flex; gap: 10px; font-size: 13px; }
+.ask-steps li .muted { font-size: 12px; margin-top: 2px; }
+.ask-steps .n, .flow .n { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; border: 1px solid var(--line); color: var(--muted); background: var(--panel2); }
+.ask-steps li.cur .n, .flow li.cur .n { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.ask-steps li.done .n, .flow li.done .n { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
+.ask-steps li.note { font-size: 12px; line-height: 1.5; }
+.ask-empty { display: flex; gap: 18px; padding: 22px 18px; align-items: flex-start; }
+.ask-empty h3 { margin: 2px 0 6px; font-size: 16px; }
+.ask-empty p { margin: 0 0 10px; }
+.ask-empty-ic { flex: none; width: 48px; height: 48px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; }
+.ask-empty-ic svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.ask-empty > div:last-child { min-width: 0; flex: 1; }
+.cmd { display: flex; align-items: center; gap: 6px; background: var(--code); border-radius: 8px; padding: 8px 10px; margin-top: 6px; }
+.cmd code { flex: 1; min-width: 0; overflow-x: auto; font-size: 12px; white-space: nowrap; background: none; }
+.flow { list-style: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 0; padding: 18px 16px 8px; }
+.flow li { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.flow li.cur, .flow li.done { color: var(--text); }
+.flow li:not(:last-child)::after { content: ""; flex: 1; height: 1px; background: var(--line); margin-left: 4px; }
+.flow-note { padding: 4px 16px 16px; font-size: 13px; }
+.msg { padding: 14px 16px; min-height: 80px; font-size: 14px; }
+.msg-text { white-space: pre-wrap; line-height: 1.65; overflow-wrap: anywhere; }
+@media (max-width: 860px) { .ask { grid-template-columns: 1fr; } .ask-steps { border-left: 0; padding: 12px 0 0; border-top: 1px solid var(--line); } }
+@media (max-width: 560px) { .adv-grid { grid-template-columns: 1fr; } .flow { grid-template-columns: repeat(2, 1fr); } .flow li::after { display: none; } .ask-bar .btn.big { width: 100%; } }
 </style>
 </head>
 <body>
@@ -1444,30 +1495,6 @@ const leaseBadge = (l) => l.degraded ? `<span class="badge bad">${tr("已降級"
 const kindName = (k) => (k === "tdx" ? "Intel TDX (T1)" : "TPM 2.0 (T2)");
 const perK = (w) => bolt(w, 6) + tr(" / 千 token", " / 1k tokens");
 
-async function pageCompute() {
-  const d = await api("compute");
-  if (!d.enabled) { $app.innerHTML = `<div class="empty">${tr("此鏈尚未啟用 AI 推論市場", "The inference market is not active on this chain")}</div>`; return; }
-  const cfg = await certConfig().catch(() => false);
-  $app.innerHTML = `<h1>${tr("AI 推論市場", "AI inference market")} <span class="badge">${num(d.jobCount)} ${tr("件工作", "jobs")}</span>${d.pendingDisputes ? ` <span class="badge bad">${d.pendingDisputes} ${tr("件爭議待審", "disputes pending")}</span>` : ""}</h1>
-    <p class="muted">${tr("提示與結果以 bolt-vault 加密，只有發出者與承接的執行者讀得到；執行者不需持有 BOLT（由中繼代送，手續費從工作扣）。", "Prompts and results are bolt-vault encrypted for the requester and the provider only; providers need no BOLT (relays submit for them, paid from the job).")}</p>
-    <div class="card" style="margin-bottom:16px"><div class="card-h"><h2>${tr("發出推論工作", "Post a job")}</h2></div><div class="cv-body" id="jpost">${cfg ? "" : `<div class="muted">${tr("此節點未設定 CAFECA 錢包；請用 <code>boltchain job post</code>。", "This node has no CAFECA wallet configured; use <code>boltchain job post</code>.")}</div>`}</div></div>
-    <div class="card" style="margin-bottom:16px"><div class="card-h"><h2>${tr("模型", "Models")}</h2></div>
-      ${d.models.length ? `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>${tr("名稱", "Name")}</th><th>${tr("參數", "Parameters")}</th><th>${tr("執行環境", "Runtime")}</th><th>${tr("權重", "Weights")}</th><th class="r">${tr("執行者", "Providers")}</th></tr></thead><tbody>
-      ${d.models.map((m) => `<tr><td>${m.id}</td><td>${esc(m.name)}</td><td>${(m.parameters / 1e9).toFixed(1)}B · ${num(m.vramMiB)} MiB</td><td>${esc(m.runtime)}</td><td class="mono">${esc(short(m.weights, 10, 6))}</td><td class="r">${m.providers}</td></tr>`).join("")}
-      </tbody></table></div>` : `<div class="empty">${tr("尚無模型", "No models yet")}</div>`}</div>
-    <div class="card" style="margin-bottom:16px"><div class="card-h"><h2>${tr("執行者", "Providers")}</h2></div>
-      ${d.providers.length ? `<div class="scroll"><table class="tbl"><thead><tr><th>${tr("地址", "Address")}</th><th class="r">${tr("押金", "Bond")}</th><th class="r">${tr("完成", "Done")}</th><th class="r">${tr("過失", "Faults")}</th><th>${tr("狀態", "Status")}</th></tr></thead><tbody>
-      ${d.providers.map((p) => `<tr><td>${aLink(p.address)}</td><td class="r mono">${bolt(p.bond, 3)}</td><td class="r">${p.jobsDone}</td><td class="r">${p.faults}</td><td>${p.registered ? (p.exitEpoch ? `<span class="badge warn">${tr("退出中", "exiting")}</span>` : `<span class="badge ok">${tr("已登記", "registered")}</span>`) : "—"}</td></tr>`).join("")}
-      </tbody></table></div>` : `<div class="empty">${tr("尚無執行者承接過工作", "No provider has taken a job yet")}</div>`}</div>
-    <div class="card"><div class="card-h"><h2>${tr("最近的工作", "Recent jobs")}</h2></div>${jobsTable(d.jobs)}</div>`;
-  if (cfg) renderPost(cfg, d);
-}
-function jobsTable(jobs) {
-  return jobs.length ? `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>${tr("狀態", "State")}</th><th>${tr("模型", "Model")}</th><th>${tr("發出者", "Requester")}</th><th>${tr("執行者", "Provider")}</th><th class="r">Tokens</th><th class="r">${tr("託管", "Escrow")}</th></tr></thead><tbody>
-    ${jobs.map((j) => `<tr><td><a href="/job/${j.id}">${j.id}</a></td><td>${jobBadge(j.state)}</td><td>${j.model}</td><td>${aLink(j.requester)}</td><td>${j.provider === "0x0000000000000000000000000000000000000000" ? `<span class="muted">${tr("開放承接", "open to all")}</span>` : aLink(j.provider)}</td><td class="r">${j.tokensIn || j.tokensOut ? `${num(j.tokensIn)} / ${num(j.tokensOut)}` : "—"}</td><td class="r mono">${bolt(j.escrow, 4)}</td></tr>`).join("")}
-    </tbody></table></div>` : `<div class="empty">${tr("尚無工作", "No jobs yet")}</div>`;
-}
-
 // The requester's encryption key lives in this browser (per account): results are sealed to it.
 let vaultMod = null;
 async function vault() {
@@ -1477,90 +1504,225 @@ async function vault() {
 const keyStore = {
   get(acct) { try { const v = localStorage.getItem("compute.key." + acct.toLowerCase()); return v ? V.fromHex(v) : null; } catch (_) { return null; } },
   set(acct, sk) { try { localStorage.setItem("compute.key." + acct.toLowerCase(), V.toHex(sk)); } catch (_) {} },
+  accounts() { const out = []; try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith("compute.key.")) out.push(k.slice(12)); } } catch (_) {} return out; },
 };
-const jstate = { busy: false, status: "", channel: null };
-function renderPost(cfg, d) {
-  const box = document.getElementById("jpost");
-  if (!box) return;
-  const provs = d.providers.filter((p) => p.registered && !p.exitEpoch && p.encKey !== "0x" + "0".repeat(64));
-  const reason = !d.models.length ? tr("尚無已登記的模型（請先用 boltchain model register 登記）", "No model registered yet (register one with boltchain model register)")
-    : !provs.length ? tr("目前沒有可指定的執行者（可用 CLI 發出開放工作）", "No provider to address yet (the CLI can post open jobs)") : "";
-  const opt = (items, none) => (items.length ? items.join("") : `<option value="">${esc(none)}</option>`);
-  box.innerHTML = `
-    <div class="jform">
-      <div class="jf-fields">
-        <label class="jf"><span>${tr("模型", "Model")}</span><select id="jmodel" ${d.models.length ? "" : "disabled"}>${opt(d.models.map((m) => `<option value="${m.id}">${m.id} · ${esc(m.name)}</option>`), tr("尚無模型", "No models"))}</select></label>
-        <label class="jf"><span>${tr("執行者", "Provider")}</span><select id="jprov" ${provs.length ? "" : "disabled"}>${opt(provs.map((p) => `<option value="${p.address}">${short(p.address, 10, 8)} · ${p.jobsDone} ${tr("件完成", "done")}</option>`), tr("尚無執行者", "No providers"))}</select></label>
-        <div class="jf"><span>${tr("每千 token 價格（BOLT）", "Price per 1k tokens (BOLT)")}</span>
-          <div class="jf-pair"><label><small>${tr("輸入", "Input")}</small><input id="jpin" inputmode="decimal" value="0.01"></label><label><small>${tr("輸出", "Output")}</small><input id="jpout" inputmode="decimal" value="0.03"></label></div></div>
-        <div class="jf"><span>${tr("token 上限", "Token limits")}</span>
-          <div class="jf-pair"><label><small>${tr("輸入", "Input")}</small><input id="jmin" inputmode="numeric" value="2000"></label><label><small>${tr("輸出", "Output")}</small><input id="jmout" inputmode="numeric" value="1000"></label></div></div>
-      </div>
-      <label class="jf jf-prompt"><span>${tr("提示", "Prompt")}</span><textarea id="jprompt" rows="9" placeholder="${esc(tr("在瀏覽器內加密後才上傳", "Encrypted in your browser before upload"))}"></textarea></label>
-    </div>
-    <div class="jf-actions"><button class="btn acc" id="jgo" ${jstate.busy || reason ? "disabled" : ""}>${tr("以 CAFECA 付款並發出", "Pay with CAFECA and post")}</button><span class="hint" id="jst">${esc(jstate.status || reason)}</span></div>
-    <div class="hint" style="margin-top:8px">${tr("解密金鑰保存在此瀏覽器；清除網站資料後就無法讀取結果。", "The decryption key stays in this browser; clearing site data loses access to results.")}</div>`;
-  const go = document.getElementById("jgo");
-  if (go) go.onclick = () => postJob(cfg, d);
+const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
+const WEI_BOLT = 10n ** 18n;
+const toWei = (s) => { const [i, f = ""] = String(s || "0").trim().split("."); if (!/^\d*$/.test(i) || !/^\d*$/.test(f)) throw new Error(tr("價格格式不正確", "bad price")); return BigInt(i || "0") * WEI_BOLT + BigInt((f + "0".repeat(18)).slice(0, 18)); };
+const fromWei = (w) => { const v = BigInt(w); const i = v / WEI_BOLT, f = (v % WEI_BOLT).toString().padStart(18, "0").replace(/0+$/, ""); return i.toString() + (f ? "." + f : ""); };
+const calldata = (sig, args) => { const s = V.parseSignature(sig); return V.toHex(V.concat(V.fromHex(s.selector), V.abiEncode(s.params.map((p) => p.type), args))); };
+const DEFAULT_PRICE = { in: "0.01", out: "0.03" };
+const cstore = { // remembered per browser: last model and advanced settings
+  get() { try { return JSON.parse(localStorage.getItem("compute.form") || "{}"); } catch (_) { return {}; } },
+  set(v) { try { localStorage.setItem("compute.form", JSON.stringify(v)); } catch (_) {} },
+};
+const jstate = { busy: false, step: 0, status: "", error: false, channel: null, model: null, prompt: "" };
+
+/// The provider to address: serves the model, registered, not leaving, with an encryption key;
+/// the most experienced one first.
+function pickProviders(d, model) {
+  return d.providers
+    .filter((p) => p.registered && !p.exitEpoch && p.encKey !== "0x" + "0".repeat(64) && (!p.models || !p.models.length || p.models.includes(model)))
+    .sort((a, b) => (b.models && b.models.includes(model)) - (a.models && a.models.includes(model)) || b.jobsDone - a.jobsDone || a.faults - b.faults);
 }
-function jsetStatus(s) { jstate.status = s; const el = document.getElementById("jst"); if (el) el.textContent = s; }
-async function postJob(cfg, d) {
-  if (jstate.busy) return;
+/// A CAFECA channel (restored, or signed in now: must run inside the click for the popup).
+async function ensureChannel(cfg, statement) {
+  if (jstate.channel) return jstate.channel;
+  const C = window.CafecaConnect || (await loadSdk(cfg.wallet));
+  jstate.channel = await getChannel(cfg);
+  if (jstate.channel) return jstate.channel;
+  const cafeca = C.create({ wallet: cfg.wallet });
+  const nonce = V.toHex(crypto.getRandomValues(new Uint8Array(16))).slice(2);
+  const resp = await cafeca.signIn({ nonce, statement, channel: { ttl: 30 * 86400 } });
+  jstate.channel = await cafeca.channel(resp);
+  if (!jstate.channel) throw new Error("CAFECA channel");
+  try { localStorage.setItem("cafeca.channel", jstate.channel.id); } catch (_) {}
+  return jstate.channel;
+}
+function forgetChannel(e) {
+  if (e && e.code === "channel_closed") { jstate.channel = null; try { localStorage.removeItem("cafeca.channel"); } catch (_) {} }
+}
+
+async function pageCompute() {
+  const [d, cfg] = await Promise.all([api("compute"), certConfig().catch(() => false)]);
+  if (!d.enabled) { $app.innerHTML = `<div class="empty">${tr("此鏈尚未啟用 AI 推論市場", "The inference market is not active on this chain")}</div>`; return; }
+  const ready = d.providers.filter((p) => p.registered && !p.exitEpoch);
+  const mine = keyStore.accounts();
+  const myJobs = d.jobs.filter((j) => mine.includes(j.requester.toLowerCase()));
+  const stats = [
+    [tr("模型", "Models"), num(d.models.length), tr("任何人都能登記", "open registry")],
+    [tr("執行者", "Providers"), num(ready.length), tr("可接單", "taking jobs")],
+    [tr("工作", "Jobs"), num(d.jobCount), d.pendingDisputes ? `<span style="color:var(--bad)">${num(d.pendingDisputes)} ${tr("件爭議待審", "disputes pending")}</span>` : tr("沒有待審爭議", "no open disputes")],
+  ];
+  $app.innerHTML = `<h1>${tr("AI 推論市場", "AI inference market")}</h1>
+    <p class="muted" style="margin:-4px 0 16px">${tr("付費請別人的機器跑 AI 模型。提示與回覆只有你和接單的執行者讀得到；依實際 token 數結算，沒用完的託管款自動退回。", "Pay someone else's machine to run an AI model. Only you and the provider who takes the job can read the prompt and the answer; you pay for the tokens used and the rest of the escrow comes back.")}</p>
+    <div class="grid stats">${stats.map(([k, v, s]) => `<div class="card stat"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("")}</div>
+    <div class="card" id="ask"></div>
+    ${myJobs.length ? `<div class="card" style="margin-top:16px"><div class="card-h"><h2>${tr("我的工作", "My jobs")}</h2><span class="hint">${tr("這個瀏覽器發出的", "posted from this browser")}</span></div>${jobsTable(myJobs, true)}</div>` : ""}
+    <div class="grid two" style="margin-top:16px">
+      <div class="card"><div class="card-h"><h2>${tr("模型", "Models")}</h2></div>${d.models.length ? `<div class="list">${d.models.map((m) => `<div class="row"><div class="ic">#${m.id}</div><div class="main"><div><b>${esc(m.name)}</b></div><div class="muted" style="font-size:12px">${(m.parameters / 1e9).toFixed(1)}B · ${num(m.vramMiB)} MiB · ${esc(m.runtime)}</div></div><span class="badge ${m.providers ? "ok" : ""}">${m.providers} ${tr("位執行者", m.providers === 1 ? "provider" : "providers")}</span></div>`).join("")}</div>` : `<div class="empty">${tr("尚無模型", "No models yet")}</div>`}</div>
+      <div class="card"><div class="card-h"><h2>${tr("執行者", "Providers")}</h2></div>${ready.length ? `<div class="scroll"><table class="tbl"><thead><tr><th>${tr("地址", "Address")}</th><th class="r">${tr("完成", "Done")}</th><th class="r">${tr("過失", "Faults")}</th><th class="r">${tr("押金", "Bond")}</th></tr></thead><tbody>
+        ${ready.map((p) => `<tr><td>${aLink(p.address)}</td><td class="r">${num(p.jobsDone)}</td><td class="r">${p.faults ? `<span style="color:var(--bad)">${p.faults}</span>` : 0}</td><td class="r mono">${bolt(p.bond, 2)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">${tr("尚無執行者", "No providers yet")}</div>`}</div>
+    </div>
+    <div class="card" style="margin-top:16px"><div class="card-h"><h2>${tr("最近的工作", "Recent jobs")}</h2></div>${jobsTable(d.jobs)}</div>`;
+  renderAsk(cfg, d);
+}
+
+function jobsTable(jobs, compact) {
+  if (!jobs.length) return `<div class="empty">${tr("尚無工作", "No jobs yet")}</div>`;
+  return `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>${tr("狀態", "State")}</th><th>${tr("模型", "Model")}</th>${compact ? "" : `<th>${tr("發出者", "Requester")}</th>`}<th>${tr("執行者", "Provider")}</th><th class="r">Tokens</th><th class="r">${tr("託管", "Escrow")}</th></tr></thead><tbody>
+    ${jobs.map((j) => `<tr><td><a href="/job/${j.id}">${j.id}</a></td><td>${jobBadge(j.state)}</td><td>${j.model}</td>${compact ? "" : `<td>${aLink(j.requester)}</td>`}<td>${j.provider === ZERO_ADDR ? `<span class="muted">${tr("開放承接", "open")}</span>` : aLink(j.provider)}</td><td class="r">${j.tokensIn || j.tokensOut ? `${num(j.tokensIn)} / ${num(j.tokensOut)}` : "—"}</td><td class="r mono">${bolt(j.escrow, 4)}</td></tr>`).join("")}
+    </tbody></table></div>`;
+}
+
+/// The composer: prompt first, the rest has defaults (advanced settings fold away).
+function renderAsk(cfg, d) {
+  const box = document.getElementById("ask");
+  if (!box) return;
+  const served = d.models.filter((m) => pickProviders(d, m.id).length);
+  if (!cfg || !served.length) {
+    const why = !cfg ? tr("這個節點沒有設定 CAFECA 錢包，網頁上無法付款。", "This node has no CAFECA wallet configured, so the page cannot take payments.")
+      : !d.models.length ? tr("市場上還沒有登記任何模型。", "No model is registered yet.")
+      : tr("目前沒有執行者在線接單。", "No provider is taking jobs right now.");
+    const cmd = (c) => `<div class="cmd"><code>${esc(c)}</code>${copyBtn(c)}</div>`;
+    box.innerHTML = `<div class="card-h"><h2>${tr("發出推論工作", "Ask a model")}</h2></div>
+      <div class="ask-empty"><div class="ask-empty-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9.5 9.5h5v5h-5zM9 2.5V6M15 2.5V6M9 18v3.5M15 18v3.5M2.5 9H6M2.5 15H6M18 9h3.5M18 15h3.5"/></svg></div>
+        <div><h3>${esc(why)}</h3><p class="muted">${!cfg ? tr("可以用命令列發出工作：", "You can post jobs from the command line:") : tr("有 GPU 的機器可以成為執行者，不需要先持有 BOLT：", "A machine with a GPU can become a provider, no BOLT needed:")}</p>
+        ${!cfg ? cmd("boltchain job post --wallet me.json --model <id> --prompt \"…\" --price-in 0.01 --price-out 0.03 --wait")
+          : (!d.models.length ? cmd("boltchain model register --wallet me.json --name \"Qwen2.5-7B-Instruct Q4_K_M\" --weights <CID> --runtime \"llama.cpp\" --parameters 7.6e9 --vram 6144") : "")
+            + cmd("boltchain provider register --wallet me.json --node-key data/node.key --relay https://<中繼節點>")
+            + cmd("boltchain provider run --wallet me.json --backend http://127.0.0.1:8080 --model 1=qwen2.5-7b --open --relay https://<中繼節點>")}
+        </div></div>`;
+    return;
+  }
+  const saved = cstore.get();
+  if (!served.some((m) => m.id === jstate.model)) jstate.model = served.some((m) => m.id === saved.model) ? saved.model : served[0].id;
+  const model = served.find((m) => m.id === jstate.model);
+  const provs = pickProviders(d, model.id);
+  const adv = saved.adv && saved.adv[model.id] ? saved.adv[model.id] : {};
+  const priceIn = adv.priceIn || (model.priceIn ? fromWei(model.priceIn) : DEFAULT_PRICE.in);
+  const priceOut = adv.priceOut || (model.priceOut ? fromWei(model.priceOut) : DEFAULT_PRICE.out);
+  const steps = [
+    [tr("在瀏覽器內加密", "Encrypted here"), tr("提示只加密給你和執行者", "Sealed for you and the provider only")],
+    [tr("CAFECA 付款託管", "Escrow with CAFECA"), tr("款項先放在合約裡", "Held by the contract")],
+    [tr("取得回覆", "Get the answer"), tr("執行者交付後自動解密", "Decrypted for you on delivery")],
+  ];
+  box.innerHTML = `<div class="card-h"><h2>${tr("發出推論工作", "Ask a model")}</h2><span class="hint">${esc(provs.length)} ${tr("位執行者可接單", provs.length === 1 ? "provider available" : "providers available")}</span></div>
+    <div class="ask">
+      <div class="ask-main">
+        ${served.length > 1 ? `<div class="chips-pick" role="radiogroup" aria-label="${esc(tr("模型", "Model"))}">${served.map((m) => `<button type="button" role="radio" aria-checked="${m.id === model.id}" class="pick ${m.id === model.id ? "on" : ""}" data-model="${m.id}">${esc(m.name)}</button>`).join("")}</div>`
+          : `<div class="ask-model"><span class="muted">${tr("模型", "Model")}</span> <b>${esc(model.name)}</b></div>`}
+        <textarea id="jprompt" rows="6" placeholder="${esc(tr("輸入你的問題…（⌘/Ctrl + Enter 送出）", "Ask anything… (⌘/Ctrl + Enter to send)"))}">${esc(jstate.prompt)}</textarea>
+        <details class="adv" ${saved.open ? "open" : ""}><summary>${tr("進階設定", "Advanced")}<span class="muted" id="advsum"></span></summary>
+          <div class="adv-grid">
+            <label class="jf"><span>${tr("執行者", "Provider")}</span><select id="jprov"><option value="">${tr("自動選擇（經驗最多）", "Automatic (most experienced)")}</option>${provs.map((p) => `<option value="${p.address}" ${adv.provider === p.address ? "selected" : ""}>${short(p.address, 8, 6)} · ${p.jobsDone} ${tr("件完成", "done")}</option>`).join("")}</select></label>
+            <label class="jf"><span>${tr("每千 token 價格（輸入，BOLT）", "Price / 1k input tokens (BOLT)")}</span><input id="jpin" inputmode="decimal" value="${esc(priceIn)}"></label>
+            <label class="jf"><span>${tr("每千 token 價格（輸出，BOLT）", "Price / 1k output tokens (BOLT)")}</span><input id="jpout" inputmode="decimal" value="${esc(priceOut)}"></label>
+            <label class="jf"><span>${tr("回覆長度上限（token）", "Answer length limit (tokens)")}</span><input id="jmout" inputmode="numeric" value="${esc(adv.maxOut || "1000")}"></label>
+          </div>
+          <div class="hint" style="margin-top:8px">${model.priceIn ? tr("價格預設為這個模型最近成交的中位數。", "Prices default to this model's recent median.") : tr("這個模型還沒有成交紀錄，價格為預設值。", "No deals for this model yet; prices are defaults.")}</div>
+        </details>
+        <div class="ask-bar">
+          <div class="ask-cost" id="jcost"></div>
+          <button class="btn acc big" id="jgo">${tr("送出並付款", "Send and pay")}</button>
+        </div>
+        <div class="ask-status ${jstate.error ? "bad" : ""}" id="jst" role="status">${esc(jstate.status)}</div>
+      </div>
+      <ol class="ask-steps">${steps.map(([h, p], i) => `<li class="${jstate.step > i + 1 ? "done" : jstate.step === i + 1 ? "cur" : ""}"><span class="n">${jstate.step > i + 1 ? "✓" : i + 1}</span><div><b>${h}</b><div class="muted">${p}</div></div></li>`).join("")}
+        <li class="note muted">${tr("解密金鑰保存在這個瀏覽器；換瀏覽器或清除網站資料後就讀不到回覆。", "The decryption key stays in this browser; another browser or cleared site data cannot read the answer.")}</li></ol>
+    </div>`;
+  const $ = (id) => document.getElementById(id);
+  const promptLen = () => [...$("jprompt").value].length;
+  const update = () => {
+    let text;
+    try {
+      const pin = toWei($("jpin").value), pout = toWei($("jpout").value), maxOut = BigInt($("jmout").value || "0");
+      // Input tokens: about one per character for CJK, a quarter for Latin; reserve double plus the chat template.
+      const maxIn = BigInt(Math.max(256, promptLen() * 2 + 64));
+      const value = (maxIn * pin) / 1000n + (maxOut * pout) / 1000n;
+      jstate.cost = { pin, pout, maxIn, maxOut, value };
+      text = `${tr("最多", "Up to")} <b>${boltFmt(value.toString())} BOLT</b> <span class="muted">· ${tr("依實際 token 數結算，未用完的退回", "you pay for tokens used; the rest comes back")}</span>`;
+    } catch (e) { jstate.cost = null; text = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
+    $("jcost").innerHTML = text;
+    const pv = $("jprov").value;
+    $("advsum").textContent = ` · ${pv ? short(pv, 6, 4) : tr("自動", "auto")} · ${$("jpin").value} / ${$("jpout").value} BOLT`;
+    $("jgo").disabled = jstate.busy || !jstate.cost || !$("jprompt").value.trim();
+  };
+  const remember = () => {
+    const v = cstore.get();
+    v.model = model.id; v.open = box.querySelector("details.adv").open;
+    v.adv = v.adv || {};
+    v.adv[model.id] = { provider: $("jprov").value, priceIn: $("jpin").value, priceOut: $("jpout").value, maxOut: $("jmout").value };
+    cstore.set(v);
+  };
+  box.querySelectorAll("button.pick").forEach((b) => (b.onclick = () => { jstate.prompt = $("jprompt").value; jstate.model = Number(b.dataset.model); cstore.set({ ...cstore.get(), model: jstate.model }); renderAsk(cfg, d); $("jprompt").focus(); }));
+  ["jprompt", "jpin", "jpout", "jmout", "jprov"].forEach((id) => $(id).addEventListener("input", () => { jstate.prompt = $("jprompt").value; update(); }));
+  ["jpin", "jpout", "jmout", "jprov"].forEach((id) => $(id).addEventListener("change", remember));
+  box.querySelector("details.adv").addEventListener("toggle", remember);
+  $("jprompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !$("jgo").disabled) { e.preventDefault(); $("jgo").click(); } });
+  $("jgo").onclick = () => postJob(cfg, d, model, provs, $("jprov").value || provs[0].address);
+  update();
+}
+
+function setAsk(step, status, error) {
+  jstate.step = step; jstate.status = status; jstate.error = !!error;
+  const st = document.getElementById("jst");
+  if (st) { st.textContent = status; st.classList.toggle("bad", !!error); }
+  document.querySelectorAll(".ask-steps li:not(.note)").forEach((li, i) => {
+    li.className = step > i + 1 ? "done" : step === i + 1 ? "cur" : "";
+    li.querySelector(".n").textContent = step > i + 1 ? "✓" : i + 1;
+  });
+}
+
+async function postJob(cfg, d, model, provs, provider) {
+  if (jstate.busy || !jstate.cost) return;
   jstate.busy = true;
-  const C = window.CafecaConnect || (await loadSdk(cfg.wallet).catch(() => null));
-  const val = (id) => document.getElementById(id).value.trim();
+  const go = document.getElementById("jgo");
+  if (go) go.disabled = true;
+  const prompt = document.getElementById("jprompt").value.trim();
+  const { pin, pout, maxIn, maxOut, value } = jstate.cost;
   try {
-    if (!C) throw new Error("cannot load the CAFECA SDK");
-    if (!jstate.channel) jstate.channel = await getChannel(cfg);
-    if (!jstate.channel) {
-      jsetStatus(t("cv.s.signin"));
-      const cafeca = C.create({ wallet: cfg.wallet });
-      const nonce = V.toHex(crypto.getRandomValues(new Uint8Array(16))).slice(2);
-      const resp = await cafeca.signIn({ nonce, statement: tr("發出 AI 推論工作", "Post an AI inference job"), channel: { ttl: 30 * 86400 } });
-      jstate.channel = await cafeca.channel(resp);
-      try { localStorage.setItem("cafeca.channel", jstate.channel.id); } catch (_) {}
-    }
-    const acct = jstate.channel.account;
+    setAsk(1, t("cv.s.signin"));
+    const ch = await ensureChannel(cfg, tr("發出 AI 推論工作", "Post an AI inference job"));
+    const acct = ch.account;
+    setAsk(1, tr("在瀏覽器內加密…", "Encrypting in the browser…"));
     const vm = await vault();
     let sk = keyStore.get(acct);
-    if (!sk) { const kp = vm.generateKeyPair(); sk = kp.secretKey; keyStore.set(acct, sk); }
+    if (!sk) { sk = vm.generateKeyPair().secretKey; keyStore.set(acct, sk); }
     const pk = vm.publicKeyOf(sk);
-    const provider = val("jprov");
-    const prov = d.providers.find((p) => p.address.toLowerCase() === provider.toLowerCase());
-    jsetStatus(tr("在瀏覽器內加密…", "Encrypting in the browser…"));
-    const body = JSON.stringify({ messages: [{ role: "user", content: val("jprompt") }], max_tokens: Number(val("jmout")) });
+    const prov = provs.find((p) => p.address.toLowerCase() === provider.toLowerCase());
+    const body = JSON.stringify({ messages: [{ role: "user", content: prompt }], max_tokens: Number(maxOut) });
     const sealed = vm.seal(V.utf8(body), "input.json", "application/json", [pk, V.fromHex(prov.encKey)]);
     const blocks = [sealed.envelope, sealed.manifest, ...sealed.shards];
     const host = await fetch("/api/compute/host", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root: sealed.envelope.cid, blocks: blocks.map((b) => [b.cid, V.toHex(b.bytes).slice(2)]) }) }).then((r) => r.json());
     if (host.error) throw new Error(host.error);
-    const wei = (s) => { const [i, f = ""] = s.split("."); return BigInt(i || "0") * 10n ** 18n + BigInt((f + "0".repeat(18)).slice(0, 18)); };
-    const pin = wei(val("jpin")), pout = wei(val("jpout")), maxIn = BigInt(val("jmin")), maxOut = BigInt(val("jmout"));
-    const value = (maxIn * pin) / 1000n + (maxOut * pout) / 1000n;
-    const now = BigInt(Math.floor(Date.now() / 1000));
-    const enc = (sig, args) => { const s = V.parseSignature(sig); return V.toHex(V.concat(V.fromHex(s.selector), V.abiEncode(s.params.map((p) => p.type), args))); };
     const calls = [];
-    const have = await api(`call?to=${d.contract}&data=${enc("encryptionKey(address)", [acct])}`).catch(() => null);
     const mine = V.toHex(pk);
-    if (!have || String(have.result || have.output || "").toLowerCase() !== mine.toLowerCase()) {
-      calls.push({ to: d.contract, value: "0", data: enc("setEncryptionKey(bytes32)", [mine]) });
-    }
-    calls.push({ to: d.contract, value: value.toString(), data: enc("post(address,uint64,bytes,uint128,uint128,uint64,uint64,uint64,uint64,uint128)", [provider, BigInt(val("jmodel")), V.toHex(V.cidBytes(sealed.envelope.cid)), pin, pout, maxIn, maxOut, now + 3600n, 86400n, 0n]) });
-    jsetStatus(t("cv.s.pay"));
-    const r = await jstate.channel.sendCalls(calls, { title: tr("發出 AI 推論工作", "Post an AI inference job"), detail: `${tr("模型", "model")} ${val("jmodel")} · ${tr("託管", "escrow")} ${boltFmt(value)} BOLT` });
+    const have = await api(`call?to=${d.contract}&data=${calldata("encryptionKey(address)", [acct])}`).catch(() => null);
+    if (!have || String(have.output || "").toLowerCase() !== mine.toLowerCase()) calls.push({ to: d.contract, value: "0", data: calldata("setEncryptionKey(bytes32)", [mine]) });
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    calls.push({ to: d.contract, value: value.toString(), data: calldata("post(address,uint64,bytes,uint128,uint128,uint64,uint64,uint64,uint64,uint128)", [provider, BigInt(model.id), V.toHex(V.cidBytes(sealed.envelope.cid)), pin, pout, maxIn, maxOut, now + 3600n, 1800n, 0n]) });
+    setAsk(2, t("cv.s.pay"));
+    const r = await ch.sendCalls(calls, { title: tr("發出 AI 推論工作", "Post an AI inference job"), detail: `${model.name} · ${tr("最多", "up to")} ${boltFmt(value.toString())} BOLT` });
     if (r && r.success === false) throw new Error("reverted");
-    jsetStatus(tr("已送出，等待上鏈…", "Sent; waiting for the block…"));
+    setAsk(2, tr("已付款，等待上鏈…", "Paid; waiting for the block…"));
     for (let i = 0; i < 60; i++) {
       const c = await api(`compute?requester=${acct}&limit=1`).catch(() => null);
       const j = c && c.jobs[0];
-      if (j && j.input === sealed.envelope.cid) { jstate.busy = false; jstate.status = ""; nav(`/job/${j.id}`); return; }
+      if (j && j.input === sealed.envelope.cid) { jstate.busy = false; jstate.prompt = ""; setAsk(0, ""); nav(`/job/${j.id}`); return; }
       await new Promise((res) => setTimeout(res, 2000));
     }
-    throw new Error("timeout");
+    throw new Error(tr("逾時：交易可能還在等待上鏈", "timed out: the transaction may still be pending"));
   } catch (e) {
-    if (e && e.code === "channel_closed") { jstate.channel = null; try { localStorage.removeItem("cafeca.channel"); } catch (_) {} }
-    jsetStatus(t("cv.s.fail", { e: (e && e.message) || e }));
-  } finally { jstate.busy = false; const g = document.getElementById("jgo"); if (g) g.disabled = false; }
+    forgetChannel(e);
+    setAsk(jstate.step, t("cv.s.fail", { e: (e && e.message) || e }), true);
+  } finally {
+    jstate.busy = false;
+    const g = document.getElementById("jgo");
+    if (g) g.disabled = !document.getElementById("jprompt").value.trim();
+  }
 }
+
 /// Fetches and opens a bolt-vault file named by `cid` with this browser's key for `acct`.
 async function openSealed(cid, acct) {
   const sk = keyStore.get(acct);
@@ -1575,37 +1737,88 @@ async function openSealed(cid, acct) {
   for (let i = 0; i < m.shards.length; i += 64) shards.push(...(await get(m.shards.slice(i, i + 64))));
   return new TextDecoder().decode(vm.recover(m.json, o.contentKey, shards));
 }
+const opened = new Map(); // cid -> text (decrypted once per page load)
+async function openText(cid, acct, pick) {
+  if (!opened.has(cid)) opened.set(cid, openSealed(cid, acct).then((txt) => { try { return pick(JSON.parse(txt)) ?? txt; } catch (_) { return txt; } }));
+  return opened.get(cid);
+}
+
 async function pageJob(id) {
-  const j = await api("compute/job/" + encodeURIComponent(id));
-  const zero = "0x0000000000000000000000000000000000000000";
-  $app.innerHTML = `<h1>${tr("推論工作", "Inference job")} #${j.id} ${jobBadge(j.state)}</h1>
-    <div class="card">${kv([
-      [tr("模型", "Model"), `${j.model}${j.modelName ? " · " + esc(j.modelName) : ""}`],
-      [tr("發出者", "Requester"), aLink(j.requester, j.requester)],
-      [tr("執行者", "Provider"), j.provider === zero ? tr("開放承接", "open to any provider") : aLink(j.provider, j.provider)],
-      [tr("價格", "Price"), `${perK(j.priceIn)} ${tr("輸入", "in")} · ${perK(j.priceOut)} ${tr("輸出", "out")}`],
-      [tr("Token（實際 / 上限）", "Tokens (used / max)"), `${num(j.tokensIn)} / ${num(j.maxIn)} ${tr("輸入", "in")} · ${num(j.tokensOut)} / ${num(j.maxOut)} ${tr("輸出", "out")}`],
-      [tr("託管", "Escrow"), bolt(j.escrow, 6)],
-      [tr("期限", "Deadline"), dateOf(j.deadline)],
-      j.deliveredAt && [tr("交付時間", "Delivered"), `${dateOf(j.deliveredAt)} · ${tr("爭議期", "dispute window")} ${Math.round(j.window / 3600)} h`],
-      [tr("加密輸入", "Encrypted input"), `<span class="mono break">${esc(j.input)}</span>`],
-      j.output && [tr("加密結果", "Encrypted result"), `<span class="mono break">${esc(j.output)}</span>`],
-      j.relays.acceptRelayer !== zero && [tr("承接中繼", "Acceptance relayed by"), `${aLink(j.relays.acceptRelayer)} · ${bolt(j.relays.acceptFee, 6)}`],
-      j.relays.deliverRelayer !== zero && [tr("交付中繼", "Receipt relayed by"), `${aLink(j.relays.deliverRelayer)} · ${bolt(j.relays.deliverFee, 6)}`],
-      j.dispute && [tr("爭議", "Dispute"), `${dateOf(j.dispute.openedAt)} · ${j.dispute.panelEpoch ? tr("驗證小組 epoch ", "panel of epoch ") + j.dispute.panelEpoch : tr("等待指派驗證小組", "waiting for a panel")}`],
-    ])}</div>
-    ${j.output ? `<div class="card" style="margin-top:16px"><div class="card-h"><h2>${tr("結果", "Result")}</h2><button class="btn" id="jread">${tr("在瀏覽器內解密", "Decrypt in this browser")}</button></div><div class="cv-body" id="jout"><div class="muted">${tr("只有發出者（用發出時的同一個瀏覽器）讀得到。", "Only the requester can read it (in the browser it posted from).")}</div></div></div>` : ""}`;
-  const b = document.getElementById("jread");
-  if (b) b.onclick = async () => {
-    const out = document.getElementById("jout");
-    out.textContent = t("loading");
-    try {
-      const txt = await openSealed(j.output, j.requester);
-      let content = txt;
-      try { const r = JSON.parse(txt); content = r.choices[0].message.content; } catch (_) {}
-      out.innerHTML = `<pre style="white-space:pre-wrap">${esc(content)}</pre>`;
-    } catch (e) { out.innerHTML = `<div class="err">${esc(e.message || e)}</div>`; }
+  const draw = async () => {
+    const [j, cfg] = await Promise.all([api("compute/job/" + encodeURIComponent(id)), certConfig().catch(() => false)]);
+    const mine = !!keyStore.get(j.requester);
+    const now = Date.now() / 1000;
+    const flow = [["open", tr("已發出", "Posted")], ["accepted", tr("執行中", "Running")], ["delivered", tr("已交付", "Delivered")], ["settled", tr("已結算", "Settled")]];
+    const at = { open: 0, accepted: 1, delivered: 2, disputed: 2, settled: 3, refunded: 3 }[j.state] ?? 0;
+    const end = j.state === "refunded" ? tr("已退款", "Refunded") : j.state === "disputed" ? tr("爭議中", "Disputed") : null;
+    const late = (j.state === "open" || j.state === "accepted") && now > j.deadline;
+    const windowEnds = j.deliveredAt ? j.deliveredAt + j.window : 0;
+    const paid = j.tokensIn || j.tokensOut ? (BigInt(j.tokensIn) * BigInt(j.priceIn)) / 1000n + (BigInt(j.tokensOut) * BigInt(j.priceOut)) / 1000n : null;
+    const actions = [];
+    const bal = BigInt(j.requesterBalance || "0");
+    if (mine && cfg && j.state === "delivered") actions.push(`<button class="btn acc" data-act="settle">${tr("確認並付款", "Approve and pay")}</button>`);
+    if (mine && cfg && late) actions.push(`<button class="btn acc" data-act="refund">${tr("取回託管款", "Get the escrow back")}</button>`);
+    else if (mine && cfg && j.state === "open") actions.push(`<button class="btn" data-act="refund">${tr("取消工作並退款", "Cancel and refund")}</button>`);
+    if (mine && cfg && bal > 0n && !actions.length) actions.push(`<button class="btn acc" data-act="withdraw">${tr("提領", "Withdraw")} ${boltFmt(bal.toString())} BOLT</button>`);
+    $app.innerHTML = `<h1>${tr("推論工作", "Inference job")} #${j.id} ${jobBadge(j.state)}</h1>
+      <div class="card"><ol class="flow">${flow.map(([k, l], i) => `<li class="${i < at || (i === at && (j.state === "settled" || j.state === "refunded")) ? "done" : i === at ? "cur" : ""}"><span class="n">${i < at || (i === at && at === 3) ? "✓" : i + 1}</span>${i === 3 && end ? end : i === 2 && j.state === "disputed" ? end : l}</li>`).join("")}</ol>
+        <div class="flow-note muted">${
+          j.state === "open" ? (late ? tr("執行者沒有在期限內接單，可以取回託管款。", "No provider took it in time; you can get the escrow back.") : tr(`等待執行者接單（期限 ${dateOf(j.deadline)}），接單前可以隨時取消。`, `Waiting for the provider (until ${dateOf(j.deadline)}); you can cancel until then.`))
+          : j.state === "accepted" ? (late ? tr("執行者逾期未交付，可以取回託管款。", "The provider missed the deadline; you can get the escrow back.") : tr("執行者正在處理，完成後回覆會出現在下方。", "The provider is working on it; the answer appears below."))
+          : j.state === "delivered" ? tr(`已交付。${dateOf(windowEnds)} 前可以提出爭議，之後自動結算；滿意可以直接確認。`, `Delivered. You can dispute until ${dateOf(windowEnds)}, after which it settles; approve now if you are happy.`)
+          : j.state === "settled" ? (bal > 0n ? tr("已結算。未用完的託管款在你的餘額裡，可以提領。", "Settled. The unused escrow is in your balance, ready to withdraw.") : tr("已結算。", "Settled."))
+          : j.state === "refunded" ? (bal > 0n ? tr("已退款，款項在你的餘額裡，可以提領。", "Refunded; the escrow is in your balance, ready to withdraw.") : tr("已退款。", "Refunded."))
+          : tr("驗證小組會重跑這件工作並裁決。", "The verifier panel re-runs the job and decides.")}</div>
+        ${actions.length ? `<div class="ask-bar" style="padding:0 16px 16px;justify-content:flex-start">${actions.join("")}<span class="ask-status" id="jact"></span></div>` : ""}
+      </div>
+      <div class="grid two" style="margin-top:16px">
+        <div class="card"><div class="card-h"><h2>${tr("提示", "Prompt")}</h2></div><div class="msg" id="jin">${mine ? `<span class="muted">${t("loading")}</span>` : `<span class="muted">${tr("已加密，只有發出者與執行者讀得到。", "Encrypted: only the requester and the provider can read it.")}</span>`}</div></div>
+        <div class="card"><div class="card-h"><h2>${tr("回覆", "Answer")}</h2>${paid !== null ? `<span class="hint">${num(j.tokensIn)} + ${num(j.tokensOut)} tokens · ${boltFmt(paid.toString())} BOLT</span>` : ""}</div><div class="msg" id="jout">${
+          !j.output ? `<span class="muted">${j.state === "refunded" ? "—" : tr("等待執行者交付…", "Waiting for the provider…")}</span>`
+          : mine ? `<span class="muted">${t("loading")}</span>` : `<span class="muted">${tr("已加密，只有發出者讀得到。", "Encrypted: only the requester can read it.")}</span>`}</div></div>
+      </div>
+      <details class="card adv-card" style="margin-top:16px"><summary>${tr("詳細資料", "Details")}</summary>${kv([
+        [tr("模型", "Model"), `${j.model}${j.modelName ? " · " + esc(j.modelName) : ""}`],
+        [tr("發出者", "Requester"), aLink(j.requester, j.requester)],
+        [tr("執行者", "Provider"), j.provider === ZERO_ADDR ? tr("開放承接", "open to any provider") : aLink(j.provider, j.provider)],
+        [tr("價格", "Price"), `${perK(j.priceIn)} ${tr("輸入", "in")} · ${perK(j.priceOut)} ${tr("輸出", "out")}`],
+        [tr("Token（實際 / 上限）", "Tokens (used / max)"), `${num(j.tokensIn)} / ${num(j.maxIn)} ${tr("輸入", "in")} · ${num(j.tokensOut)} / ${num(j.maxOut)} ${tr("輸出", "out")}`],
+        [tr("託管", "Escrow"), bolt(j.escrow, 6)],
+        [tr("期限", "Deadline"), dateOf(j.deadline)],
+        [tr("加密輸入", "Encrypted input"), `<span class="mono break">${esc(j.input)}</span>`],
+        j.output && [tr("加密結果", "Encrypted result"), `<span class="mono break">${esc(j.output)}</span>`],
+        j.relays.acceptRelayer !== ZERO_ADDR && [tr("承接中繼", "Acceptance relayed by"), `${aLink(j.relays.acceptRelayer)} · ${bolt(j.relays.acceptFee, 6)}`],
+        j.relays.deliverRelayer !== ZERO_ADDR && [tr("交付中繼", "Receipt relayed by"), `${aLink(j.relays.deliverRelayer)} · ${bolt(j.relays.deliverFee, 6)}`],
+        j.dispute && [tr("爭議", "Dispute"), `${dateOf(j.dispute.openedAt)} · ${j.dispute.panelEpoch ? tr("驗證小組週期 ", "panel of epoch ") + j.dispute.panelEpoch : tr("等待指派驗證小組", "waiting for a panel")}`],
+      ])}${mine && j.state === "delivered" ? `<div class="hint" style="padding:12px 16px">${tr("要提出爭議請用命令列：", "To dispute, use the command line: ")}<code>boltchain job dispute ${j.id}</code></div>` : ""}</details>`;
+    const show = (elId, p) => p.then((txt) => { const el = document.getElementById(elId); if (el) el.innerHTML = `<div class="msg-text">${esc(txt)}</div>`; })
+      .catch((e) => { const el = document.getElementById(elId); if (el) el.innerHTML = `<span style="color:var(--bad)">${esc(e.message || e)}</span>`; });
+    if (mine) {
+      show("jin", openText(j.input, j.requester, (r) => r.messages && r.messages.map((m) => m.content).join("\n\n")));
+      if (j.output) show("jout", openText(j.output, j.requester, (r) => r.choices && r.choices[0].message.content));
+    }
+    document.querySelectorAll("[data-act]").forEach((b) => (b.onclick = async () => {
+      const st = document.getElementById("jact");
+      const act = b.dataset.act;
+      b.disabled = true;
+      try {
+        const ch = await ensureChannel(cfg, tr("處理 AI 推論工作", "Manage an AI inference job"));
+        st.textContent = t("cv.s.pay");
+        // Refunds and unused escrow land in the requester's balance: withdraw it in the same batch.
+        const C = "0xb017000000000000000000000000000000000006";
+        const calls = act === "withdraw" ? [] : [{ to: C, value: "0", data: calldata(`${act}(uint256)`, [BigInt(j.id)]) }];
+        calls.push({ to: C, value: "0", data: calldata("withdraw(address)", [ch.account]) });
+        const title = act === "settle" ? tr("確認推論工作並付款", "Approve and pay") : act === "withdraw" ? tr("提領餘額", "Withdraw") : tr("取回託管款", "Get the escrow back");
+        const r = await ch.sendCalls(calls, { title, detail: `#${j.id}` });
+        if (r && r.success === false) throw new Error("reverted");
+        st.textContent = tr("已送出，等待上鏈…", "Sent; waiting for the block…");
+        setTimeout(() => draw().catch(() => {}), 4000);
+      } catch (e) { forgetChannel(e); st.textContent = t("cv.s.fail", { e: (e && e.message) || e }); b.disabled = false; }
+    }));
+    return j;
   };
+  const j = await draw();
+  if (!["settled", "refunded"].includes(j.state)) every(5000, async () => { const k = await api("compute/job/" + encodeURIComponent(id)); if (k.state !== j.state || k.output !== j.output) { j.state = k.state; j.output = k.output; await draw(); } });
 }
 
 async function pageTee() {
